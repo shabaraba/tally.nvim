@@ -115,18 +115,56 @@ by_cmd[cmd_name]  = plugin_name
 
 ### 7.2 `cmd`
 
-`CmdlineLeave` の autocmd。
+2経路。主経路がコマンド生成 API のフック、副経路が `CmdlineLeave`。
+
+**(a) `nvim_create_user_command` のフック（主経路）**
+
+`vim.api.nvim_create_user_command` を差し替え、`command` 引数が function のときだけカウンタでラップする。`opts` には一切手を触れない。
+
+```lua
+local orig = vim.api.nvim_create_user_command
+vim.api.nvim_create_user_command = function(name, command, opts)
+  if type(command) == "function" then
+    command = wrap_cmd(source_of_caller(), name, command)
+  end
+  return orig(name, command, opts)
+end
+```
+
+`vim.keymap.set` のフックと対称であり、リスクの性質も同じ。生成時にフックするため `nargs` / `range` / `complete` などの復元問題が発生しない。
+
+この経路の利点は、**呼び出し元を問わず正確に数えられる**こと。cmdline での手打ち、`<cmd>Telescope find_files<cr>` のような keymap 経由、Lua からの `vim.cmd` のいずれも捕捉する。
+
+**ラップしない条件**: `command` が文字列のとき。`<args>` / `<range>` / `<bang>` の再展開が必要になり誤りやすいため素通しする。Vimscript の `:command` で定義されたコマンドも同様にフックできない。
+
+**(b) `CmdlineLeave`（フォールバック）**
+
+(a) でラップできなかったコマンドのため、手打ち分だけでも拾う。
 
 - `vim.fn.getcmdtype() == ":"` のときのみ処理する
 - `v:event.abort` が真（Esc でキャンセル）なら無視する
 - `getcmdline()` から range 接頭辞（`%`、`1,5`、`'<,'>` 等）を読み飛ばしてコマンド名を抽出する
-- `by_cmd` に一致した場合のみカウントする
-
-**限界**: 手で打ったコマンドのみを数える。`<cmd>Telescope<cr>` のような keymap 経由の呼び出しは `CmdlineLeave` を発火しないが、これは `key` として数えられるため取りこぼしにはならない。
+- `by_cmd` に一致し、かつ (a) でラップ**していない**コマンドのみカウントする（二重計上の防止）
 
 ### 7.3 `key`
 
-keymap をカウンタでラップして再登録する。対象は2経路。
+#### rhs の3分類
+
+keymap の rhs は3種類あり、計測手段が異なる。設計時に実環境（74件の `keys=` 宣言）を計測した内訳:
+
+| rhs の型 | 件数 | 計測手段 |
+|---|---|---|
+| function | 26 | 本節のラップで押下回数を計測 |
+| Ex コマンド（`:Foo<cr>` / `<cmd>Foo<cr>`） | 34 | keymap は触らず、7.2 (a) の**コマンド側で**計測 |
+| `<Plug>(...)` | 14 | 押下回数は計測しない（後述） |
+
+`<Plug>` マップをラップしない理由は、operator-pending やビジュアルモードでの意味論が変わり、`yanky.nvim` の `y` や `nvim-surround` の `,s` のような日常操作を壊すリスクが実在するため。
+
+ただしこれらは例外なく `keys=` による遅延ロードであり、**そのセッションでロードされた事実がそのまま「使った」を意味する**。押下回数は出ないがセッション単位の使用実績は取れるため、レポートでは「計測不能」ではなく「セッション粒度」として区別して報告する。
+
+#### ラップの2経路
+
+function rhs の keymap をカウンタでラップして再登録する。対象は2経路。
 
 **(a) LazyLoad 差分で検出したグローバル keymap**
 
@@ -143,9 +181,9 @@ opts = {
 }
 ```
 
-**ラップしない条件**（触れずに素通しし、レポートで「計測不能」として報告する）:
+**ラップしない条件**（触れずに素通しする）:
 
-- `entry.callback` が function でない（文字列 rhs）。`feedkeys` で再現すると `noremap` や operator-pending の意味論が変わり、環境を壊すリスクがある
+- `entry.callback` が function でない（文字列 rhs）。`feedkeys` で再現すると `noremap` や operator-pending の意味論が変わり、環境を壊すリスクがある。Ex コマンドを呼ぶものは 7.2 (a) のコマンド側で計測され、`<Plug>` 系はセッション粒度に落ちる
 - `entry.expr == 1`。expr マップの評価中は textlock により副作用が制限されるため
 
 **(b) `vim.keymap.set` のグローバルフック**（`hook_keymap_set = true` のとき）
@@ -223,11 +261,15 @@ tally   2026-05-01 〜 2026-08-24 / 142 sessions
   telescope.nvim      141 sess   key 892  cmd 40  last today
 ■ passive（判定対象外）
   solarized-osaka, hlchunk, nvim-colorizer
-■ 計測不能（文字列 rhs / expr のみ）
-  vim-expand-region
+■ セッション粒度のみ（<Plug> マップのため押下回数なし）
+  yanky.nvim         138 sess   last today
+  nvim-surround       91 sess   last 2026-08-21
+  vim-expand-region    4 sess   last 2026-05-30
 ```
 
 区分の境界は「未ロード = 0 セッション」「低頻度 = 全セッションの 10% 未満」「常用 = それ以外」。
+
+「セッション粒度のみ」は、計測手段の制約で押下回数が出ないプラグインを分離して示す区分である。`key` の値が小さいことを使用頻度の低さと誤読させないために独立させる。判定自体はセッション数で行うので、この区分の中でも未ロード・低頻度は識別できる。
 
 バッファは `modifiable = false`、`filetype = "tally"`。見出しへのハイライトのみ付ける。
 
@@ -259,16 +301,16 @@ require("tally").setup({
 }
 ```
 
-- `early()`: `vim.keymap.set` のフックのみを張る。設定は既定値で判断する。`lazy.setup()` 中に priority 降順で走るため、他プラグインの `init` より先に入る。厳密な最先着は保証されないが実用上は十分
+- `early()`: `vim.keymap.set` と `vim.api.nvim_create_user_command` のフックを張る。この2つのみ。設定は既定値で判断する。`lazy.setup()` 中に priority 降順で走るため、他プラグインの `init` より先に入る。厳密な最先着は保証されないが実用上は十分
 - `setup(opts)`: 設定のマージ、autocmd 登録、スナップショット取得、タイマー起動
 
-`early()` を呼ばなくても動作する。その場合 buffer-local keymap が計測対象から外れるだけで、lazy spec 由来の keymap は問題なく計測される。
+`early()` を呼ばなくても動作するが、コマンドの計測が `CmdlineLeave` の手打ち分だけに縮退し、buffer-local keymap も計測対象から外れる。実測では keymap の 46%（74件中34件）が Ex コマンド経由であり、その計測はコマンドフックに依存するため、`early()` の呼び出しを推奨構成とする。
 
 ## 12. パフォーマンス
 
 | 箇所 | コスト |
 |---|---|
-| `early()` | 関数を1つ差し替えるのみ |
+| `early()` | 関数を2つ差し替えるのみ |
 | `setup()` | autocmd 3個 + タイマー1個 + スナップショット |
 | keymap 発火時 | 関数呼び出し1回とテーブルのインクリメント1回 |
 | 帰属インデックス構築 | 初回 `LazyLoad` まで遅延 |
@@ -284,7 +326,8 @@ require("tally").setup({
 
 ## 14. 既知の限界
 
-- 文字列 rhs および `expr` の keymap は計測できない。レポートで明示する
+- `<Plug>` を rhs とする keymap と `expr` の keymap は押下回数を計測できない。セッション単位のロード実績のみとなる。レポートで区分して明示する
+- 文字列で定義されたコマンドおよび Vimscript の `:command` で定義されたコマンドはラップできず、`CmdlineLeave` による手打ち分の計測に縮退する
 - Lua API の直接呼び出し（`require("telescope.builtin").find_files()`）は計測しない
 - 表示・常駐系プラグインの有用性は計測できない。`passive` タグで除外する
 - lazy.nvim 以外のプラグインマネージャには対応しない
@@ -296,10 +339,10 @@ plenary.busted を使用し、`nvim --headless -c "PlenaryBustedDirectory tests/
 
 テスト対象:
 
-- `attrib`: lazy spec 形式（文字列 / テーブル / mode のリスト指定）のパース、パスからのプラグイン名抽出
+- `attrib`: lazy spec 形式（文字列 / テーブル / mode のリスト指定 / `cmd` の文字列と配列の両方）のパース、パスからのプラグイン名抽出
 - `store`: JSONL の往復、壊れた行のスキップ、4096 バイト超の分割
-- `report`: 集計の総和、区分の境界、ロスターとの突き合わせで未ロードが 0 として現れること
-- `track`: コマンド名の抽出（range 接頭辞つきを含む）、ラップ対象外条件の判定
+- `report`: 集計の総和、区分の境界、ロスターとの突き合わせで未ロードが 0 として現れること、「セッション粒度のみ」区分への振り分け
+- `track`: rhs の3分類判定（function / Ex コマンド / `<Plug>`）、コマンド名の抽出（range 接頭辞つきを含む）、ラップ対象外条件の判定、コマンドフックと `CmdlineLeave` の二重計上が起きないこと
 
 計測フックそのものの結合テストは実 Neovim の状態に依存するため、手動確認とする。
 
