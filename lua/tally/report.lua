@@ -61,24 +61,27 @@ function M.classify(agg, roster, idx)
   local threshold = math.max(1, math.floor(agg.sessions * LOW_RATIO))
 
   for _, name in ipairs(roster) do
-    local p = agg.plugins[name] or { sessions = 0, key_total = 0, cmd_total = 0 }
-    local row = {
-      name = name,
-      sessions = p.sessions,
-      key_total = p.key_total,
-      cmd_total = p.cmd_total,
-      last = p.last,
-    }
-    if config.is_passive(name) then
-      table.insert(groups.passive, row)
-    elseif p.sessions == 0 then
-      table.insert(groups.unloaded, row)
-    elseif p.sessions < threshold then
-      table.insert(groups.low, row)
-    elseif M.session_only(name, idx) then
-      table.insert(groups.session_only, row)
-    else
-      table.insert(groups.high, row)
+    -- 計測対象外のプラグインを「削除候補」として出さない
+    if attrib.attributable(name) then
+      local p = agg.plugins[name] or { sessions = 0, key_total = 0, cmd_total = 0 }
+      local row = {
+        name = name,
+        sessions = p.sessions,
+        key_total = p.key_total,
+        cmd_total = p.cmd_total,
+        last = p.last,
+      }
+      if config.is_passive(name) then
+        table.insert(groups.passive, row)
+      elseif p.sessions == 0 then
+        table.insert(groups.unloaded, row)
+      elseif p.sessions < threshold then
+        table.insert(groups.low, row)
+      elseif M.session_only(name, idx) then
+        table.insert(groups.session_only, row)
+      else
+        table.insert(groups.high, row)
+      end
     end
   end
 
@@ -104,7 +107,7 @@ local function append_group(lines, title, rows, note)
   lines[#lines + 1] = ""
   lines[#lines + 1] = "■ " .. title .. (note and ("  " .. note) or "")
   for _, r in ipairs(rows) do
-    lines[#lines + 1] = ("  %-28s %5d sess  key %-6d cmd %-6d last %s"):format(
+    lines[#lines + 1] = ("  %-30s %5d sess  key %-6d cmd %-6d last %s"):format(
       r.name,
       r.sessions,
       r.key_total,

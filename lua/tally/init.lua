@@ -12,6 +12,16 @@ function M.early()
   track.hook(config.options)
 end
 
+function M._vim_entered()
+  return vim.v.vim_did_enter == 1
+end
+
+-- セッション数の分母。起動直後に落ちても失われないよう即 flush する
+function M.record_session()
+  counter.add("$session", "load")
+  M.flush()
+end
+
 function M.flush()
   local data = counter.drain()
   local t = os.time()
@@ -30,14 +40,18 @@ function M.setup(opts)
 
   local group = vim.api.nvim_create_augroup("Tally", { clear = true })
 
-  vim.api.nvim_create_autocmd("VimEnter", {
-    group = group,
-    once = true,
-    callback = function()
-      counter.add("$session", "load")
-      M.flush()
-    end,
-  })
+  -- setup が VimEnter より後に呼ばれた場合、autocmd は二度と発火しないので即記録する
+  if M._vim_entered() then
+    M.record_session()
+  else
+    vim.api.nvim_create_autocmd("VimEnter", {
+      group = group,
+      once = true,
+      callback = function()
+        M.record_session()
+      end,
+    })
+  end
 
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,

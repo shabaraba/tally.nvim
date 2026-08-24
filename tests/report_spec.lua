@@ -121,3 +121,24 @@ describe("report.render", function()
     assert.is_truthy(text:find("10 sessions"))
   end)
 end)
+
+describe("report.classify roster filtering", function()
+  local idx = { by_cmd = {}, kinds = {} }
+  local agg = { sessions = 10, plugins = { ["flash.nvim"] = { sessions = 9 } } }
+
+  before_each(function()
+    config.setup({})
+  end)
+
+  it("never lists lazy.nvim as a removal candidate", function()
+    local groups = report.classify(agg, { "lazy.nvim", "flash.nvim" }, idx)
+    for _, row in ipairs(groups.unloaded) do
+      assert.not_equals("lazy.nvim", row.name)
+    end
+  end)
+
+  it("never lists itself as a removal candidate", function()
+    local groups = report.classify(agg, { "tally.nvim", "flash.nvim" }, idx)
+    assert.same({}, groups.unloaded)
+  end)
+end)

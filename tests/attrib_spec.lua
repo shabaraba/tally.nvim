@@ -139,3 +139,21 @@ describe("attrib.plugin_of_path", function()
     assert.is_nil(attrib.plugin_of_path("/home/me/.config/nvim/init.lua", dirs))
   end)
 end)
+
+describe("attrib.attributable", function()
+  it("rejects lazy.nvim because it registers keys on behalf of others", function()
+    assert.is_false(attrib.attributable("lazy.nvim"))
+  end)
+
+  it("rejects tally.nvim itself", function()
+    assert.is_false(attrib.attributable("tally.nvim"))
+  end)
+
+  it("rejects nil", function()
+    assert.is_false(attrib.attributable(nil))
+  end)
+
+  it("accepts a normal plugin", function()
+    assert.is_true(attrib.attributable("flash.nvim"))
+  end)
+end)

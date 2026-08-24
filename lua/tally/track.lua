@@ -32,15 +32,32 @@ local MODES = { "n", "v", "x", "s", "o", "i", "c", "t" }
 M._hooked = false
 M.orig_keymap_set = nil
 
+-- lazy spec の keys 宣言から lhs の持ち主を引く。
+-- keys= のマップは lazy が代理で登録するため、スタック解決より spec が正確
+function M.spec_owner(mode, lhs)
+  local idx = attrib.index()
+  if not idx or not idx.by_key then
+    return nil
+  end
+  local modes = type(mode) == "table" and mode or { mode }
+  for _, m in ipairs(modes) do
+    local owner = idx.by_key[m] and idx.by_key[m][lhs]
+    if owner then
+      return owner
+    end
+  end
+  return nil
+end
+
 local function hook_keymap_set()
   local orig = vim.keymap.set
   M.orig_keymap_set = orig
   vim.keymap.set = function(mode, lhs, rhs, opts)
     if type(rhs) == "function" and not (opts and opts.expr) then
-      local plugin = attrib.resolve(3)
-      if plugin then
+      local key = type(lhs) == "table" and lhs[1] or lhs
+      local plugin = M.spec_owner(mode, key) or attrib.resolve(3)
+      if attrib.attributable(plugin) then
         local inner = rhs
-        local key = type(lhs) == "table" and lhs[1] or lhs
         rhs = function(...)
           counter.add(plugin, "key", key)
           return inner(...)
@@ -55,8 +72,9 @@ local function hook_user_command()
   local orig = vim.api.nvim_create_user_command
   vim.api.nvim_create_user_command = function(name, command, opts)
     if type(command) == "function" then
-      local plugin = attrib.resolve(3)
-      if plugin then
+      local idx = attrib.index()
+      local plugin = (idx and idx.by_cmd[name]) or attrib.resolve(3)
+      if attrib.attributable(plugin) then
         local inner = command
         M.wrapped_cmds[name] = true
         command = function(...)
@@ -102,6 +120,10 @@ local function wrap_existing(mode, entry, plugin)
   end
   local inner = entry.callback
   local lhs = entry.lhs
+  plugin = M.spec_owner(mode, lhs) or plugin
+  if not attrib.attributable(plugin) then
+    return
+  end
   -- フック済みの vim.keymap.set を呼ぶと二重ラップになるため元の関数を使う
   local set = M.orig_keymap_set or vim.keymap.set
   set(mode, lhs, function(...)
@@ -146,7 +168,7 @@ function M.attach(opts)
       pattern = "LazyLoad",
       callback = function(args)
         local plugin = args.data
-        if type(plugin) ~= "string" then
+        if type(plugin) ~= "string" or not attrib.attributable(plugin) then
           return
         end
         if opts.track.load then

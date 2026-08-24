@@ -1,15 +1,24 @@
 local M = {}
 
--- UI 部品を提供するだけのプラグインは呼び出し元として扱わない
+-- UI 部品を提供するだけのプラグイン。呼び出し元候補としては後回しにする
 local UTILITY = {
   ["plenary.nvim"] = true,
   ["nui.nvim"] = true,
   ["nvim-notify"] = true,
   ["dressing.nvim"] = true,
   ["popup.nvim"] = true,
+}
+
+-- 帰属先として絶対に採用しないプラグイン。
+-- lazy は keys=/cmd= の宣言を代理で登録するだけで、利用実態を表さない
+local NEVER = {
   ["lazy.nvim"] = true,
   ["tally.nvim"] = true,
 }
+
+function M.attributable(name)
+  return name ~= nil and not NEVER[name]
+end
 
 M._index = nil
 
@@ -136,7 +145,7 @@ function M.resolve(level)
       break
     end
     local name = M.plugin_of_path(info.source, idx.dirs)
-    if name then
+    if M.attributable(name) then
       if not UTILITY[name] then
         return name
       end
