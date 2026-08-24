@@ -87,7 +87,7 @@ by_cmd[cmd_name]  = plugin_name
 
 `User LazyLoad` はロード**後**に発火するため、前状態は事前に保持しておく必要がある。手順:
 
-1. `setup()` 時に `nvim_get_commands({ builtin = false })` と `nvim_get_keymap(mode)` のスナップショットを取る
+1. `setup()` 時に `nvim_get_commands({ builtin = false })` と、モード `n` / `v` / `x` / `s` / `o` / `i` / `c` / `t` それぞれの `nvim_get_keymap(mode)` のスナップショットを取る
 2. `LazyLoad` 発火のたびに現在の状態と比較し、新規分を `event.data`（プラグイン名）に帰属させる
 3. スナップショットを更新する
 
@@ -130,11 +130,12 @@ keymap をカウンタでラップして再登録する。対象は2経路。
 
 **(a) LazyLoad 差分で検出したグローバル keymap**
 
-`nvim_get_keymap` のエントリから元の設定を復元して再登録する。
+`nvim_get_keymap` はグローバル keymap のみを返すため、この経路が扱うのはグローバル keymap に限られる。buffer-local keymap は (b) の担当。
+
+エントリから元の設定を復元して再登録する。
 
 ```
 opts = {
-  buffer  = entry.buffer ~= 0 and entry.buffer or nil,
   silent  = entry.silent == 1,
   noremap = entry.noremap == 1,
   nowait  = entry.nowait == 1,
@@ -178,7 +179,7 @@ rhs が function 以外、または `expr` のときは**引数に一切手を�
 ```
 
 - `t`: flush 時刻（Unix 秒）
-- `p`: プラグイン名。`$session` はセッション数の分母を数える特別なエントリ
+- `p`: プラグイン名。`$session` はセッション数の分母を数える特別なエントリで、`load` フィールドをセッション数のカウンタとして流用する
 - `load` / `cmd` / `key`: 差分カウント。空なら省略
 
 差分方式のため集計は単純な総和になり、クラッシュしても直近の flush 間隔分を失うだけで済む。
@@ -236,11 +237,13 @@ tally   2026-05-01 〜 2026-08-24 / 142 sessions
 require("tally").setup({
   store_dir       = vim.fn.stdpath("state") .. "/tally",
   flush_interval  = 300,
-  passive         = {},      -- プラグイン名のリスト。Lua パターン可
+  passive         = {},      -- Lua パターンのリスト
   hook_keymap_set = true,
   track           = { load = true, cmd = true, key = true },
 })
 ```
+
+`passive` の各要素は Lua パターンとしてプラグイン名に**部分一致**で照合する。`"solarized%-osaka"` は `solarized-osaka.nvim` に一致する。完全一致させたい場合は `"^name$"` と書く。
 
 `passive` は計測を偽装せず、判定対象外であることを明示するための手動タグである。colorscheme や表示系プラグインをここに列挙する。
 
