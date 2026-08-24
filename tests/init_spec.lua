@@ -1,0 +1,46 @@
+local tally = require("tally")
+local counter = require("tally.counter")
+local config = require("tally.config")
+local store = require("tally.store")
+
+describe("tally.flush", function()
+  local dir
+
+  before_each(function()
+    counter.drain()
+    dir = vim.fn.tempname()
+    config.setup({ store_dir = dir })
+  end)
+
+  it("writes drained counts to the store", function()
+    counter.add("flash.nvim", "load")
+    counter.add("flash.nvim", "key", "gs")
+    counter.add("flash.nvim", "key", "gs")
+    tally.flush()
+
+    local records = store.read_all(dir)
+    assert.equals(1, #records)
+    assert.equals("flash.nvim", records[1].p)
+    assert.equals(1, records[1].load)
+    assert.equals(2, records[1].key.gs)
+  end)
+
+  it("empties the counter so the next flush is a delta", function()
+    counter.add("oil.nvim", "load")
+    tally.flush()
+    tally.flush()
+    assert.equals(1, #store.read_all(dir))
+  end)
+
+  it("writes nothing when there is no activity", function()
+    tally.flush()
+    assert.same({}, store.read_all(dir))
+  end)
+
+  it("writes one record per plugin", function()
+    counter.add("a.nvim", "load")
+    counter.add("b.nvim", "load")
+    tally.flush()
+    assert.equals(2, #store.read_all(dir))
+  end)
+end)
