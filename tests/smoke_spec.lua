@@ -1,0 +1,7 @@
+describe("test harness", function()
+  it("can require the tally module", function()
+    local ok, mod = pcall(require, "tally")
+    assert.is_true(ok)
+    assert.is_table(mod)
+  end)
+end)

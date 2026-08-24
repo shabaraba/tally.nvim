@@ -1,0 +1,83 @@
+*tally.txt*  Record which Neovim plugins you actually use
+
+==============================================================================
+CONTENTS                                                       *tally-contents*
+
+  1. Introduction ......................... |tally-introduction|
+  2. Requirements ......................... |tally-requirements|
+  3. Setup ................................ |tally-setup|
+  4. Commands ............................. |tally-commands|
+  5. Configuration ........................ |tally-configuration|
+  6. Privacy .............................. |tally-privacy|
+  7. Limitations .......................... |tally-limitations|
+
+==============================================================================
+1. INTRODUCTION                                            *tally-introduction*
+
+tally.nvim counts plugin loads, command invocations and keymap presses across
+sessions and persists them, so that pruning your plugin list can be based on
+measurement rather than memory.
+
+==============================================================================
+2. REQUIREMENTS                                            *tally-requirements*
+
+  - Neovim >= 0.10
+  - lazy.nvim
+
+==============================================================================
+3. SETUP                                                          *tally-setup*
+
+>lua
+    {
+      "shabaraba/tally.nvim",
+      lazy = false,
+      priority = 1000,
+      init = function() require("tally").early() end,
+      opts = {},
+    }
+<
+                                                                *tally.early()*
+tally.early()
+    Installs the |vim.keymap.set| and |nvim_create_user_command()| hooks. Call
+    from the lazy spec's `init` so the hooks are in place before other plugins
+    load. Optional; without it, command tracking degrades to typed commands.
+
+                                                                *tally.setup()*
+tally.setup({opts})
+    Merges configuration, registers autocommands and starts the flush timer.
+
+==============================================================================
+4. COMMANDS                                                    *tally-commands*
+
+                                                                      *:Tally*
+:Tally                  Open the usage report in a new tab.
+
+==============================================================================
+5. CONFIGURATION                                          *tally-configuration*
+
+store_dir       string  Where the JSONL records live.
+                        Default: stdpath("state") .. "/tally"
+flush_interval  number  Seconds between flushes. Default: 300
+passive         table   Lua patterns matched as substrings against plugin
+                        names. Matching plugins are excluded from the usage
+                        verdict. Default: {}
+hook_keymap_set boolean Hook |vim.keymap.set| to catch buffer-local keymaps.
+                        Default: true
+track           table   { load = true, cmd = true, key = true }
+
+==============================================================================
+6. PRIVACY                                                      *tally-privacy*
+
+Only plugin names, command names and keymap left-hand sides are written. File
+paths, buffer contents and command arguments are never recorded, and nothing
+leaves the machine.
+
+==============================================================================
+7. LIMITATIONS                                              *tally-limitations*
+
+  - <Plug> keymaps are counted per session, not per press.
+  - Vimscript-defined commands fall back to typed invocations only.
+  - Direct Lua API calls are not counted.
+  - lazy.nvim only.
+
+vim:tw=78:ts=8:ft=help:norl:
