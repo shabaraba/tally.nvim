@@ -9,7 +9,7 @@ test: deps
 	  -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
 
 fmt:
-	stylua lua tests
+	stylua lua tests plugin
 
 fmt-check:
-	stylua --check lua tests
+	stylua --check lua tests plugin
