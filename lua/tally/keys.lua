@@ -7,6 +7,15 @@ local M = {}
 local LOW_RATIO = 0.1
 local MODES = { "n", "v", "x", "s", "o", "i", "c", "t" }
 
+-- 同じ lhs が複数プラグインに帰属した履歴がある場合の持ち主を決める。
+-- 回数が多い方を採用し、同数なら pairs() の走査順に依存しないよう名前の昇順で選ぶ
+function M.better_owner(owner, top, plugin, n)
+  if n > top or (n == top and plugin < owner) then
+    return plugin, n
+  end
+  return owner, top
+end
+
 function M.collect(agg)
   local rows = {}
   for plugin, p in pairs(agg.plugins or {}) do
@@ -17,11 +26,7 @@ function M.collect(agg)
         rows[lhs] = row
       end
       row.count = row.count + n
-      -- 同じ lhs が複数プラグインに帰属した履歴がある場合は回数の多い側を採る。
-      -- 同数なら pairs() の走査順に依存しないよう名前の昇順で決定的に選ぶ
-      if n > row.top or (n == row.top and plugin < row.owner) then
-        row.top, row.owner = n, plugin
-      end
+      row.owner, row.top = M.better_owner(row.owner, row.top, plugin, n)
     end
   end
   for _, row in pairs(rows) do

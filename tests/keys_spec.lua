@@ -21,7 +21,9 @@ describe("keys.collect", function()
     assert.same({}, keys.collect({ sessions = 0, plugins = {} }))
   end)
 
-  it("breaks an owner tie deterministically by plugin name ascending", function()
+  it("uses better_owner so a tie in collect favors the lexically smaller name", function()
+    -- 実際の走査順に依存しないことは keys.better_owner の直接呼び出しテストが保証する。
+    -- ここでは collect がそのルールを実際に使っていることだけを確認する
     local agg = {
       sessions = 10,
       plugins = {
@@ -31,6 +33,29 @@ describe("keys.collect", function()
     }
     local rows = keys.collect(agg)
     assert.equals("aaa.nvim", rows["<leader>tt"].owner)
+  end)
+end)
+
+describe("keys.better_owner", function()
+  -- pairs() の走査順に依存させないため、rows/collect を経由せず直接呼び出す。
+  -- 2 つの it に分けているのは、片方の assert が先に落ちてもう片方が
+  -- 実行されずに済んでしまう（=見かけ上パスする）事態を避けるため
+  it("picks the lexically smaller plugin name on a tie, owner-arg larger", function()
+    local owner, top = keys.better_owner("zzz.nvim", 7, "aaa.nvim", 7)
+    assert.equals("aaa.nvim", owner)
+    assert.equals(7, top)
+  end)
+
+  it("picks the lexically smaller plugin name on a tie, plugin-arg larger", function()
+    local owner, top = keys.better_owner("aaa.nvim", 7, "zzz.nvim", 7)
+    assert.equals("aaa.nvim", owner)
+    assert.equals(7, top)
+  end)
+
+  it("still prefers the higher count over the name when they differ", function()
+    local owner, top = keys.better_owner("aaa.nvim", 3, "zzz.nvim", 9)
+    assert.equals("zzz.nvim", owner)
+    assert.equals(9, top)
   end)
 end)
 
@@ -158,10 +183,12 @@ describe("keys.existing", function()
     assert.is_nil(existing["<Plug>(TallyKeysProbe)"])
   end)
 
-  it("includes buffer-local mappings from loaded buffers", function()
+  it("includes buffer-local mappings from loaded buffers and skips buffer-local <Plug>", function()
     buf = vim.api.nvim_create_buf(false, true)
     vim.keymap.set("n", "gzb", "yy", { buffer = buf })
+    vim.keymap.set("n", "<Plug>(TallyKeysBufProbe)", "yy", { buffer = buf })
     local existing = keys.existing()
     assert.is_true(existing["gzb"])
+    assert.is_nil(existing["<Plug>(TallyKeysBufProbe)"])
   end)
 end)
