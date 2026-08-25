@@ -100,6 +100,7 @@ describe("track.snapshot and diff_and_wrap", function()
 
   after_each(function()
     pcall(vim.keymap.del, "n", "<Plug>TallyTestA")
+    pcall(vim.keymap.del, "n", "gzt")
     pcall(vim.api.nvim_del_user_command, "TallyTestCmd")
     attrib._index = nil
   end)
@@ -120,9 +121,27 @@ describe("track.snapshot and diff_and_wrap", function()
   it("counts a press of a newly wrapped keymap", function()
     local prev = track.snapshot()
     local hits = 0
-    vim.keymap.set("n", "<Plug>TallyTestA", function()
+    vim.keymap.set("n", "gzt", function()
       hits = hits + 1
     end)
+    track.diff_and_wrap("fake.nvim", prev)
+
+    local entry
+    for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
+      if e.lhs == "gzt" then
+        entry = e
+      end
+    end
+    assert.is_table(entry)
+    entry.callback()
+
+    assert.equals(1, hits)
+    assert.equals(1, counter.peek()["fake.nvim"].key["gzt"])
+  end)
+
+  it("does not wrap <Plug> as an lhs", function()
+    local prev = track.snapshot()
+    vim.keymap.set("n", "<Plug>TallyTestA", function() end)
     track.diff_and_wrap("fake.nvim", prev)
 
     local entry
@@ -134,8 +153,7 @@ describe("track.snapshot and diff_and_wrap", function()
     assert.is_table(entry)
     entry.callback()
 
-    assert.equals(1, hits)
-    assert.equals(1, counter.peek()["fake.nvim"].key["<Plug>TallyTestA"])
+    assert.is_nil(counter.peek()["fake.nvim"])
   end)
 end)
 
@@ -246,5 +264,59 @@ describe("track.attach LazyLoad filtering", function()
   it("ignores non-string event data", function()
     fire(nil)
     assert.same({}, counter.peek())
+  end)
+end)
+
+describe("track double wrapping", function()
+  local saved_set
+
+  before_each(function()
+    counter.drain()
+    saved_set = vim.keymap.set
+    track._hooked = false
+    attrib._index = {
+      by_key = { n = { ["gzd"] = "fake.nvim" } },
+      by_cmd = {},
+      kinds = {},
+      dirs = {},
+    }
+  end)
+
+  after_each(function()
+    vim.keymap.set = saved_set
+    track._hooked = false
+    pcall(vim.keymap.del, "n", "gzd")
+    attrib._index = nil
+  end)
+
+  it("counts a single press once when hook and diff both see the keymap", function()
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    local prev = track.snapshot()
+    vim.keymap.set("n", "gzd", function() end)
+    track.diff_and_wrap("fake.nvim", prev)
+
+    local entry
+    for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
+      if e.lhs == "gzd" then
+        entry = e
+      end
+    end
+    assert.is_table(entry)
+    entry.callback()
+
+    assert.equals(1, counter.peek()["fake.nvim"].key["gzd"])
+  end)
+end)
+
+describe("track.is_plug_lhs", function()
+  it("detects <Plug> in any case", function()
+    assert.is_true(track.is_plug_lhs("<Plug>(YankyYank)"))
+    assert.is_true(track.is_plug_lhs("<plug>TallyTestA"))
+  end)
+
+  it("rejects ordinary lhs", function()
+    assert.is_false(track.is_plug_lhs("gd"))
+    assert.is_false(track.is_plug_lhs("<leader>ff"))
+    assert.is_false(track.is_plug_lhs(nil))
   end)
 end)

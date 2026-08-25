@@ -2,6 +2,18 @@ local M = {}
 
 M.wrapped_cmds = {}
 
+-- ラップ済みのコールバック。関数の同一性で判定するので lhs の衝突に強い
+M._wrapped = setmetatable({}, { __mode = "k" })
+
+function M.mark_wrapped(fn)
+  M._wrapped[fn] = true
+  return fn
+end
+
+function M.is_plug_lhs(lhs)
+  return type(lhs) == "string" and lhs:lower():match("^<plug>") ~= nil
+end
+
 function M.extract_cmd_name(line)
   if type(line) ~= "string" or line == "" then
     return nil
@@ -19,6 +31,12 @@ function M.should_wrap_keymap(entry)
     return false
   end
   if entry.expr == 1 then
+    return false
+  end
+  if M.is_plug_lhs(entry.lhs) then
+    return false
+  end
+  if M._wrapped[entry.callback] then
     return false
   end
   return true
@@ -53,15 +71,15 @@ local function hook_keymap_set()
   local orig = vim.keymap.set
   M.orig_keymap_set = orig
   vim.keymap.set = function(mode, lhs, rhs, opts)
-    if type(rhs) == "function" and not (opts and opts.expr) then
-      local key = type(lhs) == "table" and lhs[1] or lhs
+    local key = type(lhs) == "table" and lhs[1] or lhs
+    if type(rhs) == "function" and not (opts and opts.expr) and not M.is_plug_lhs(key) then
       local plugin = M.spec_owner(mode, key) or attrib.resolve(3)
       if attrib.attributable(plugin) then
         local inner = rhs
-        rhs = function(...)
+        rhs = M.mark_wrapped(function(...)
           counter.add(plugin, "key", key)
           return inner(...)
-        end
+        end)
       end
     end
     return orig(mode, lhs, rhs, opts)
