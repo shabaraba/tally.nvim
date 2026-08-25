@@ -320,3 +320,82 @@ describe("track.is_plug_lhs", function()
     assert.is_false(track.is_plug_lhs(nil))
   end)
 end)
+
+describe("track string rhs wrapping", function()
+  local saved_set
+
+  before_each(function()
+    counter.drain()
+    saved_set = vim.keymap.set
+    track._hooked = false
+    attrib._index = { by_key = {}, by_cmd = {}, kinds = {}, dirs = {} }
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { "hello world" })
+  end)
+
+  after_each(function()
+    vim.keymap.set = saved_set
+    track._hooked = false
+    for _, lhs in ipairs({ "gzy", "gzc", "gzn", "$" }) do
+      pcall(vim.keymap.del, "n", lhs)
+    end
+    pcall(vim.keymap.del, "n", "<Plug>(TallyProbe)")
+    attrib._index = nil
+  end)
+
+  it("counts a press of a <Plug> mapping and still runs it", function()
+    attrib._index.by_key = { n = { gzy = "fake.nvim" } }
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+
+    track.orig_keymap_set("n", "<Plug>(TallyProbe)", "yy", { noremap = true })
+    vim.keymap.set("n", "gzy", "<Plug>(TallyProbe)", { remap = true })
+
+    vim.fn.setreg("z", "")
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys(vim.keycode('"zgzy'), "x", false)
+
+    assert.equals(1, counter.peek()["fake.nvim"].key["gzy"])
+    assert.equals("hello world\n", vim.fn.getreg("z"))
+  end)
+
+  it("preserves noremap for a plain string rhs", function()
+    attrib._index.by_key = { n = { gzn = "fake.nvim" } }
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+
+    track.orig_keymap_set("n", "$", "0", { remap = false })
+    vim.keymap.set("n", "gzn", "y$", { noremap = true })
+
+    vim.fn.setreg('"', "")
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys(vim.keycode("gzn"), "x", false)
+
+    assert.equals(1, counter.peek()["fake.nvim"].key["gzn"])
+    -- $ が 0 にリマップされていれば空になる。noremap が保たれていれば行末まで入る
+    assert.equals("hello world", vim.fn.getreg('"'))
+  end)
+
+  it("counts a press of an expr callback mapping", function()
+    attrib._index.by_key = { n = { gzc = "fake.nvim" } }
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+
+    vim.keymap.set("n", "gzc", function()
+      return "yy"
+    end, { expr = true })
+
+    vim.fn.setreg('"', "")
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys(vim.keycode("gzc"), "x", false)
+
+    assert.equals(1, counter.peek()["fake.nvim"].key["gzc"])
+    assert.equals("hello world\n", vim.fn.getreg('"'))
+  end)
+
+  it("passes string rhs with expr through untouched", function()
+    local seen
+    vim.keymap.set = function(_, _, rhs)
+      seen = rhs
+    end
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    vim.keymap.set("n", "gzc", "line('.') > 1 ? 'k' : 'j'", { expr = true })
+    assert.equals("line('.') > 1 ? 'k' : 'j'", seen)
+  end)
+end)

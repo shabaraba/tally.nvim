@@ -1,5 +1,8 @@
 local M = {}
 
+local attrib = require("tally.attrib")
+local counter = require("tally.counter")
+
 M.wrapped_cmds = {}
 
 -- ラップ済みのコールバック。関数の同一性で判定するので lhs の衝突に強い
@@ -14,6 +17,20 @@ function M.is_plug_lhs(lhs)
   return type(lhs) == "string" and lhs:lower():match("^<plug>") ~= nil
 end
 
+-- 押下を数えるラッパ。文字列 rhs は expr 化して元の文字列をそのまま返す
+function M.make_wrapper(plugin, lhs, rhs)
+  if type(rhs) == "function" then
+    return M.mark_wrapped(function(...)
+      counter.add(plugin, "key", lhs)
+      return rhs(...)
+    end)
+  end
+  return M.mark_wrapped(function()
+    counter.add(plugin, "key", lhs)
+    return rhs
+  end)
+end
+
 function M.extract_cmd_name(line)
   if type(line) ~= "string" or line == "" then
     return nil
@@ -25,25 +42,6 @@ function M.extract_cmd_name(line)
   s = s:gsub("^[%s:]+", "")
   return s:match("^(%a[%w_]*)")
 end
-
-function M.should_wrap_keymap(entry)
-  if type(entry.callback) ~= "function" then
-    return false
-  end
-  if entry.expr == 1 then
-    return false
-  end
-  if M.is_plug_lhs(entry.lhs) then
-    return false
-  end
-  if M._wrapped[entry.callback] then
-    return false
-  end
-  return true
-end
-
-local attrib = require("tally.attrib")
-local counter = require("tally.counter")
 
 local MODES = { "n", "v", "x", "s", "o", "i", "c", "t" }
 
@@ -72,14 +70,19 @@ local function hook_keymap_set()
   M.orig_keymap_set = orig
   vim.keymap.set = function(mode, lhs, rhs, opts)
     local key = type(lhs) == "table" and lhs[1] or lhs
-    if type(rhs) == "function" and not (opts and opts.expr) and not M.is_plug_lhs(key) then
+    local is_expr = opts and opts.expr
+    local wrappable = (type(rhs) == "function")
+      or (type(rhs) == "string" and rhs ~= "" and not is_expr)
+
+    if wrappable and not M.is_plug_lhs(key) then
       local plugin = M.spec_owner(mode, key) or attrib.resolve(3)
       if attrib.attributable(plugin) then
-        local inner = rhs
-        rhs = M.mark_wrapped(function(...)
-          counter.add(plugin, "key", key)
-          return inner(...)
-        end)
+        if type(rhs) == "string" then
+          opts = opts and vim.deepcopy(opts) or {}
+          opts.expr = true
+          opts.replace_keycodes = true
+        end
+        rhs = M.make_wrapper(plugin, key, rhs)
       end
     end
     return orig(mode, lhs, rhs, opts)
@@ -133,23 +136,35 @@ function M.snapshot()
 end
 
 local function wrap_existing(mode, entry, plugin)
-  if not M.should_wrap_keymap(entry) then
+  if M.is_plug_lhs(entry.lhs) then
     return
   end
-  local inner = entry.callback
+  if entry.callback and M._wrapped[entry.callback] then
+    return
+  end
+
   local lhs = entry.lhs
+  local rhs, expr
+  if type(entry.callback) == "function" then
+    rhs, expr = entry.callback, entry.expr == 1
+  elseif type(entry.rhs) == "string" and entry.rhs ~= "" and entry.expr ~= 1 then
+    rhs, expr = entry.rhs, true
+  else
+    return
+  end
+
   plugin = M.spec_owner(mode, lhs) or plugin
   if not attrib.attributable(plugin) then
     return
   end
+
   -- フック済みの vim.keymap.set を呼ぶと二重ラップになるため元の関数を使う
   local set = M.orig_keymap_set or vim.keymap.set
-  set(mode, lhs, function(...)
-    counter.add(plugin, "key", lhs)
-    return inner(...)
-  end, {
+  set(mode, lhs, M.make_wrapper(plugin, lhs, rhs), {
+    expr = expr,
+    replace_keycodes = type(rhs) == "string" or nil,
+    remap = entry.noremap ~= 1,
     silent = entry.silent == 1,
-    noremap = entry.noremap == 1,
     nowait = entry.nowait == 1,
     desc = entry.desc,
   })

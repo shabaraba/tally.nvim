@@ -31,17 +31,3 @@ describe("track.extract_cmd_name", function()
     assert.is_nil(track.extract_cmd_name("123"))
   end)
 end)
-
-describe("track.should_wrap_keymap", function()
-  it("accepts a lua callback", function()
-    assert.is_true(track.should_wrap_keymap({ callback = function() end, expr = 0 }))
-  end)
-
-  it("rejects a string rhs", function()
-    assert.is_false(track.should_wrap_keymap({ rhs = ":Telescope<cr>", expr = 0 }))
-  end)
-
-  it("rejects an expr mapping", function()
-    assert.is_false(track.should_wrap_keymap({ callback = function() end, expr = 1 }))
-  end)
-end)
