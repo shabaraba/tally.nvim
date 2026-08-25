@@ -185,3 +185,49 @@ describe("attrib.plug_owner", function()
     assert.is_nil(attrib.plug_owner("<Plug>(Whatever)"))
   end)
 end)
+
+describe("attrib.user_path", function()
+  it("recognises a file under the config dir", function()
+    local cfg = vim.fn.stdpath("config")
+    assert.is_true(attrib.user_path("@" .. cfg .. "/lua/keymaps.lua"))
+    assert.is_true(attrib.user_path(cfg .. "/init.lua"))
+  end)
+
+  it("rejects anything outside it", function()
+    assert.is_false(attrib.user_path("@/data/lazy/telescope.nvim/lua/x.lua"))
+    assert.is_false(attrib.user_path('@[string "luaeval"]'))
+    assert.is_false(attrib.user_path(nil))
+  end)
+end)
+
+describe("attrib.resolve with user config", function()
+  after_each(function()
+    attrib._index = nil
+  end)
+
+  it("falls back to $user for a caller in the config dir", function()
+    attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+    local cfg = vim.fn.stdpath("config")
+    assert.equals("$user", attrib.resolve_from({ "@" .. cfg .. "/lua/keymaps.lua" }))
+  end)
+
+  it("prefers a plugin over $user", function()
+    attrib._index = {
+      by_key = {},
+      by_cmd = {},
+      by_plug = {},
+      kinds = {},
+      dirs = { { dir = "/data/lazy/flash.nvim", name = "flash.nvim" } },
+    }
+    local cfg = vim.fn.stdpath("config")
+    assert.equals(
+      "flash.nvim",
+      attrib.resolve_from({ "@" .. cfg .. "/lua/keymaps.lua", "@/data/lazy/flash.nvim/lua/x.lua" })
+    )
+  end)
+
+  it("returns nil when nothing matches", function()
+    attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+    assert.is_nil(attrib.resolve_from({ "@/tmp/somewhere.lua" }))
+  end)
+end)

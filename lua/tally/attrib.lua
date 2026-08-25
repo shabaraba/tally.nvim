@@ -144,26 +144,50 @@ function M.plugin_of_path(path, dirs)
   return nil
 end
 
-function M.resolve(level)
+local USER = "$user"
+
+function M.user_path(path)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+  if path:sub(1, 1) == "@" then
+    path = path:sub(2)
+  end
+  local cfg = vim.fn.stdpath("config")
+  return path:sub(1, #cfg + 1) == cfg .. "/"
+end
+
+-- 呼び出し元パスの列から帰属先を決める。resolve から切り出してテスト可能にした
+function M.resolve_from(paths)
   local idx = M.index()
   if not idx then
     return nil
   end
-  local fallback = nil
-  for i = level or 2, 30 do
-    local info = debug.getinfo(i, "S")
-    if not info then
-      break
-    end
-    local name = M.plugin_of_path(info.source, idx.dirs)
+  local fallback, user = nil, nil
+  for _, path in ipairs(paths) do
+    local name = M.plugin_of_path(path, idx.dirs)
     if M.attributable(name) then
       if not UTILITY[name] then
         return name
       end
       fallback = fallback or name
+    elseif not user and M.user_path(path) then
+      user = USER
     end
   end
-  return fallback
+  return fallback or user
+end
+
+function M.resolve(level)
+  local paths = {}
+  for i = level or 2, 30 do
+    local info = debug.getinfo(i, "S")
+    if not info then
+      break
+    end
+    paths[#paths + 1] = info.source
+  end
+  return M.resolve_from(paths)
 end
 
 return M
