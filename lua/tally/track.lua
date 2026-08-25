@@ -145,6 +145,16 @@ function M.snapshot()
   return snap
 end
 
+-- nvim_get_keymap はモードのビットで一致するため、"v" の列挙には x 専用・s 専用の
+-- マッピングも混ざる。ループ側のモードで張り直すと適用範囲が広がってしまうので、
+-- 常に entry.mode を使う。" " は :map（nvo+select）、"!" は :map! に対応する
+local function target_mode(mode, entry)
+  if entry.mode == nil or entry.mode == "" then
+    return mode
+  end
+  return entry.mode == " " and "" or entry.mode
+end
+
 local function wrap_existing(mode, entry, plugin)
   if M.is_plug_lhs(entry.lhs) then
     return
@@ -170,7 +180,7 @@ local function wrap_existing(mode, entry, plugin)
 
   -- フック済みの vim.keymap.set を呼ぶと二重ラップになるため元の関数を使う
   local set = M.orig_keymap_set or vim.keymap.set
-  set(mode, lhs, M.make_wrapper(plugin, lhs, rhs), {
+  set(target_mode(mode, entry), lhs, M.make_wrapper(plugin, lhs, rhs), {
     expr = expr,
     replace_keycodes = type(rhs) == "string" or nil,
     remap = entry.noremap ~= 1,

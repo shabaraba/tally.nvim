@@ -86,3 +86,81 @@ describe("track.sweep", function()
     assert.is_nil(entry.callback)
   end)
 end)
+
+describe("track.sweep mode preservation", function()
+  local PROBES = { "<F7>", "<F8>", "<F9>", "<F10>" }
+
+  -- lhs が現れるモードと、その entry.mode の組を並べる。
+  -- 「存在するか」ではなく「どのモードに効くか」を比較するために mode まで見る
+  local function shape(lhs)
+    local out = {}
+    for _, m in ipairs({ "n", "v", "x", "s", "o", "i", "c" }) do
+      for _, e in ipairs(vim.api.nvim_get_keymap(m)) do
+        if e.lhs == lhs then
+          out[#out + 1] = m .. "->" .. e.mode
+        end
+      end
+    end
+    return out
+  end
+
+  local function wrapped(lhs)
+    for _, m in ipairs({ "n", "v", "x", "s", "o", "i", "c" }) do
+      for _, e in ipairs(vim.api.nvim_get_keymap(m)) do
+        if e.lhs == lhs then
+          return type(e.callback) == "function"
+        end
+      end
+    end
+    return false
+  end
+
+  before_each(function()
+    require("tally.counter").drain()
+    require("tally.attrib")._index =
+      { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+    track.orig_keymap_set = nil
+    vim.cmd("xnoremap <F7> yy")
+    vim.cmd("snoremap <F8> yy")
+    vim.cmd("map <F9> yy")
+    vim.cmd("map! <F10> xx")
+  end)
+
+  after_each(function()
+    pcall(vim.keymap.del, "x", "<F7>")
+    pcall(vim.keymap.del, "s", "<F8>")
+    pcall(vim.keymap.del, "", "<F9>")
+    pcall(vim.keymap.del, "!", "<F10>")
+    require("tally.attrib")._index = nil
+  end)
+
+  it("does not widen a mapping's modes when wrapping it", function()
+    local before = {}
+    for _, lhs in ipairs(PROBES) do
+      before[lhs] = shape(lhs)
+    end
+
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
+
+    for _, lhs in ipairs(PROBES) do
+      assert.is_true(wrapped(lhs))
+      assert.same(before[lhs], shape(lhs))
+    end
+  end)
+
+  it("keeps an x-only mapping out of select mode", function()
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
+    assert.same({ "v->x", "x->x" }, shape("<F7>"))
+  end)
+
+  it("keeps an s-only mapping out of visual mode", function()
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
+    assert.same({ "v->s", "s->s" }, shape("<F8>"))
+  end)
+
+  it("keeps :map and :map! mappings on all their original modes", function()
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
+    assert.same({ "n-> ", "v-> ", "x-> ", "s-> ", "o-> " }, shape("<F9>"))
+    assert.same({ "i->!", "c->!" }, shape("<F10>"))
+  end)
+end)
