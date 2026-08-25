@@ -1,6 +1,59 @@
 local M = {}
 
+local attrib = require("tally.attrib")
+local counter = require("tally.counter")
+
 M.wrapped_cmds = {}
+
+-- ラップ済みのコールバック。関数の同一性で判定するので lhs の衝突に強い
+M._wrapped = setmetatable({}, { __mode = "k" })
+
+-- ラッパ -> 可変の帰属セル。遅延ロードで持ち主が後から判明するため
+M._owner = setmetatable({}, { __mode = "k" })
+
+local USER = "$user"
+
+function M.mark_wrapped(fn)
+  M._wrapped[fn] = true
+  return fn
+end
+
+function M.is_plug_lhs(lhs)
+  return type(lhs) == "string" and lhs:lower():match("^<plug>") ~= nil
+end
+
+-- $user 止まりの帰属だけを、後から判明したプラグインへ格上げする。
+-- 実在のプラグイン名が入っているセルは上書きしない
+function M.upgrade_owner(fn, plugin)
+  local cell = M._owner[fn]
+  if cell and cell.plugin == USER and attrib.attributable(plugin) and plugin ~= USER then
+    cell.plugin = plugin
+  end
+end
+
+-- 押下を数えるラッパ。文字列 rhs は expr 化して元の文字列をそのまま返す
+function M.make_wrapper(plugin, lhs, rhs)
+  local cell = { plugin = plugin }
+  local fn
+  if type(rhs) == "function" then
+    fn = function(...)
+      counter.add(cell.plugin, "key", lhs)
+      return rhs(...)
+    end
+  else
+    -- <Plug> の提供元は遅延ロードで後から判明するので押下時に引く
+    local plug = rhs:lower():match("^<plug>") and rhs or nil
+    fn = function()
+      local owner = plug and attrib.plug_owner(plug) or nil
+      -- 緩めたゲート越しに来た plugin は未フィルタなので、fallback 側でも弾く
+      local fallback = attrib.attributable(cell.plugin) and cell.plugin or nil
+      counter.add(attrib.attributable(owner) and owner or fallback, "key", lhs)
+      return rhs
+    end
+  end
+  M._owner[fn] = cell
+  return M.mark_wrapped(fn)
+end
 
 function M.extract_cmd_name(line)
   if type(line) ~= "string" or line == "" then
@@ -13,19 +66,6 @@ function M.extract_cmd_name(line)
   s = s:gsub("^[%s:]+", "")
   return s:match("^(%a[%w_]*)")
 end
-
-function M.should_wrap_keymap(entry)
-  if type(entry.callback) ~= "function" then
-    return false
-  end
-  if entry.expr == 1 then
-    return false
-  end
-  return true
-end
-
-local attrib = require("tally.attrib")
-local counter = require("tally.counter")
 
 local MODES = { "n", "v", "x", "s", "o", "i", "c", "t" }
 
@@ -53,15 +93,25 @@ local function hook_keymap_set()
   local orig = vim.keymap.set
   M.orig_keymap_set = orig
   vim.keymap.set = function(mode, lhs, rhs, opts)
-    if type(rhs) == "function" and not (opts and opts.expr) then
-      local key = type(lhs) == "table" and lhs[1] or lhs
+    local key = type(lhs) == "table" and lhs[1] or lhs
+    local is_expr = opts and opts.expr
+    -- <Nop> を剥がすのは do_map であって replace_termcodes ではない。
+    -- expr 化すると "<Nop>" の 5 文字がそのまま打鍵として実行されてしまう
+    local is_nop = type(rhs) == "string" and rhs:lower() == "<nop>"
+    local wrappable = (type(rhs) == "function")
+      or (type(rhs) == "string" and rhs ~= "" and not is_nop and not is_expr)
+
+    if wrappable and not M.is_plug_lhs(key) then
       local plugin = M.spec_owner(mode, key) or attrib.resolve(3)
-      if attrib.attributable(plugin) then
-        local inner = rhs
-        rhs = function(...)
-          counter.add(plugin, "key", key)
-          return inner(...)
+      -- <Plug> の rhs は帰属を押下時に引き直すので、宣言元が解決できなくても包む
+      local rhs_is_plug = type(rhs) == "string" and M.is_plug_lhs(rhs)
+      if attrib.attributable(plugin) or rhs_is_plug then
+        if type(rhs) == "string" then
+          opts = opts and vim.deepcopy(opts) or {}
+          opts.expr = true
+          opts.replace_keycodes = true
         end
+        rhs = M.make_wrapper(plugin, key, rhs)
       end
     end
     return orig(mode, lhs, rhs, opts)
@@ -114,24 +164,52 @@ function M.snapshot()
   return snap
 end
 
+-- nvim_get_keymap はモードのビットで一致するため、"v" の列挙には x 専用・s 専用の
+-- マッピングも混ざる。ループ側のモードで張り直すと適用範囲が広がってしまうので、
+-- 常に entry.mode を使う。" " は :map（nvo+select）、"!" は :map! に対応する
+local function target_mode(mode, entry)
+  if entry.mode == nil or entry.mode == "" then
+    return mode
+  end
+  return entry.mode == " " and "" or entry.mode
+end
+
 local function wrap_existing(mode, entry, plugin)
-  if not M.should_wrap_keymap(entry) then
+  if M.is_plug_lhs(entry.lhs) then
     return
   end
-  local inner = entry.callback
+
   local lhs = entry.lhs
   plugin = M.spec_owner(mode, lhs) or plugin
+
+  -- ラップ済みなら張り直さない。ただし $user 止まりの帰属だけは格上げする。
+  -- 設定ディレクトリから張られたプラグインのマッピングは、フック時点では
+  -- $user にしか解決できず、LazyLoad の差分で初めて持ち主が分かる
+  if entry.callback and M._wrapped[entry.callback] then
+    M.upgrade_owner(entry.callback, plugin)
+    return
+  end
+
+  local rhs, expr
+  if type(entry.callback) == "function" then
+    rhs, expr = entry.callback, entry.expr == 1
+  elseif type(entry.rhs) == "string" and entry.rhs ~= "" and entry.expr ~= 1 then
+    rhs, expr = entry.rhs, true
+  else
+    return
+  end
+
   if not attrib.attributable(plugin) then
     return
   end
+
   -- フック済みの vim.keymap.set を呼ぶと二重ラップになるため元の関数を使う
   local set = M.orig_keymap_set or vim.keymap.set
-  set(mode, lhs, function(...)
-    counter.add(plugin, "key", lhs)
-    return inner(...)
-  end, {
+  set(target_mode(mode, entry), lhs, M.make_wrapper(plugin, lhs, rhs), {
+    expr = expr,
+    replace_keycodes = type(rhs) == "string" or nil,
+    remap = entry.noremap ~= 1,
     silent = entry.silent == 1,
-    noremap = entry.noremap == 1,
     nowait = entry.nowait == 1,
     desc = entry.desc,
   })
@@ -150,12 +228,33 @@ function M.diff_and_wrap(plugin, prev)
   for _, mode in ipairs(MODES) do
     for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
       if not prev.keys[mode][entry.lhs] then
-        wrap_existing(mode, entry, plugin)
+        if M.is_plug_lhs(entry.lhs) then
+          if idx and idx.by_plug and not idx.by_plug[entry.lhs] then
+            idx.by_plug[entry.lhs] = plugin
+          end
+        else
+          wrap_existing(mode, entry, plugin)
+        end
       end
     end
   end
 
   return M.snapshot()
+end
+
+-- early() より前から存在するマッピングを包み直す。
+-- Neovim 標準のマッピングや、フック設置前に読まれた設定が対象
+function M.sweep(opts)
+  -- エディタ中の全マッピングを張り直す最も侵襲的な経路なので、
+  -- hook_keymap_set を切った利用者の意図どおり黙る
+  if not opts.track.key or not opts.hook_keymap_set then
+    return
+  end
+  for _, mode in ipairs(MODES) do
+    for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
+      wrap_existing(mode, entry, USER)
+    end
+  end
 end
 
 function M.attach(opts)

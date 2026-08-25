@@ -36,36 +36,7 @@ describe("report.aggregate", function()
   end)
 end)
 
-describe("report.session_only", function()
-  local idx = {
-    by_cmd = { Trouble = "trouble.nvim" },
-    kinds = {
-      ["yanky.nvim"] = { plug = 7 },
-      ["flash.nvim"] = { ["function"] = 2 },
-      ["telescope.nvim"] = { excmd = 6 },
-      ["trouble.nvim"] = { excmd = 2 },
-    },
-  }
-
-  it("is true when every key is a plug mapping and there is no command", function()
-    assert.is_true(report.session_only("yanky.nvim", idx))
-  end)
-
-  it("is false when a key is a lua function", function()
-    assert.is_false(report.session_only("flash.nvim", idx))
-  end)
-
-  it("is false when keys invoke ex commands", function()
-    assert.is_false(report.session_only("telescope.nvim", idx))
-  end)
-
-  it("is false for a plugin with no keys at all", function()
-    assert.is_false(report.session_only("nvim-cmp", idx))
-  end)
-end)
-
 describe("report.classify", function()
-  local idx = { by_cmd = {}, kinds = { ["yanky.nvim"] = { plug = 3 } } }
   local agg = {
     sessions = 100,
     plugins = {
@@ -88,23 +59,19 @@ describe("report.classify", function()
   end
 
   it("puts never-loaded plugins in unloaded even if absent from records", function()
-    assert.same({ "vim-mql5" }, names(report.classify(agg, roster, idx).unloaded))
+    assert.same({ "vim-mql5" }, names(report.classify(agg, roster).unloaded))
   end)
 
   it("puts plugins under 10 percent of sessions in low", function()
-    assert.same({ "diffview.nvim" }, names(report.classify(agg, roster, idx).low))
+    assert.same({ "diffview.nvim" }, names(report.classify(agg, roster).low))
   end)
 
   it("puts frequently used plugins in high", function()
-    assert.same({ "telescope.nvim" }, names(report.classify(agg, roster, idx).high))
-  end)
-
-  it("separates session-only plugins from high", function()
-    assert.same({ "yanky.nvim" }, names(report.classify(agg, roster, idx).session_only))
+    assert.same({ "yanky.nvim", "telescope.nvim" }, names(report.classify(agg, roster).high))
   end)
 
   it("excludes passive plugins from every usage group", function()
-    local groups = report.classify(agg, roster, idx)
+    local groups = report.classify(agg, roster)
     assert.same({ "hlchunk.nvim" }, names(groups.passive))
     assert.is_false(vim.tbl_contains(names(groups.high), "hlchunk.nvim"))
   end)
@@ -113,7 +80,7 @@ end)
 describe("report.render", function()
   it("produces lines including a header and every group heading", function()
     local agg = { sessions = 10, plugins = {} }
-    local groups = { unloaded = {}, low = {}, high = {}, passive = {}, session_only = {} }
+    local groups = { unloaded = {}, low = {}, high = {}, passive = {} }
     local lines = report.render(agg, groups)
     assert.is_true(#lines > 0)
     local text = table.concat(lines, "\n")
@@ -123,7 +90,6 @@ describe("report.render", function()
 end)
 
 describe("report.classify roster filtering", function()
-  local idx = { by_cmd = {}, kinds = {} }
   local agg = { sessions = 10, plugins = { ["flash.nvim"] = { sessions = 9 } } }
 
   before_each(function()
@@ -131,14 +97,14 @@ describe("report.classify roster filtering", function()
   end)
 
   it("never lists lazy.nvim as a removal candidate", function()
-    local groups = report.classify(agg, { "lazy.nvim", "flash.nvim" }, idx)
+    local groups = report.classify(agg, { "lazy.nvim", "flash.nvim" })
     for _, row in ipairs(groups.unloaded) do
       assert.not_equals("lazy.nvim", row.name)
     end
   end)
 
   it("never lists itself as a removal candidate", function()
-    local groups = report.classify(agg, { "tally.nvim", "flash.nvim" }, idx)
+    local groups = report.classify(agg, { "tally.nvim", "flash.nvim" })
     assert.same({}, groups.unloaded)
   end)
 end)

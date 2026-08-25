@@ -22,23 +22,6 @@ end
 
 M._index = nil
 
-function M.rhs_kind(rhs)
-  if type(rhs) == "function" then
-    return "function"
-  end
-  if type(rhs) ~= "string" then
-    return "other"
-  end
-  local lower = rhs:lower()
-  if lower:match("^%s*:") or lower:match("^<cmd>") then
-    return "excmd"
-  end
-  if lower:match("^<plug>") then
-    return "plug"
-  end
-  return "other"
-end
-
 function M.parse_keys(keys)
   local out = {}
   if type(keys) ~= "table" then
@@ -54,7 +37,7 @@ function M.parse_keys(keys)
     if type(lhs) == "string" then
       local modes = type(mode) == "table" and mode or { mode }
       for _, m in ipairs(modes) do
-        out[#out + 1] = { lhs = lhs, mode = m, rhs_kind = M.rhs_kind(rhs) }
+        out[#out + 1] = { lhs = lhs, mode = m, rhs = rhs }
       end
     end
   end
@@ -88,7 +71,7 @@ function M.build(plugins)
     return nil
   end
 
-  local idx = { by_key = {}, by_cmd = {}, dirs = {}, kinds = {} }
+  local idx = { by_key = {}, by_cmd = {}, by_plug = {}, dirs = {} }
   for _, p in ipairs(plugins) do
     if p.name then
       if p.dir then
@@ -97,8 +80,9 @@ function M.build(plugins)
       for _, k in ipairs(M.parse_keys(p.keys)) do
         idx.by_key[k.mode] = idx.by_key[k.mode] or {}
         idx.by_key[k.mode][k.lhs] = p.name
-        idx.kinds[p.name] = idx.kinds[p.name] or {}
-        idx.kinds[p.name][k.rhs_kind] = (idx.kinds[p.name][k.rhs_kind] or 0) + 1
+        if type(k.rhs) == "string" and k.rhs:lower():match("^<plug>") then
+          idx.by_plug[k.rhs] = p.name
+        end
       end
       for _, c in ipairs(M.parse_cmd(p.cmd)) do
         idx.by_cmd[c] = p.name
@@ -118,6 +102,14 @@ function M.index()
   return M._index or M.build()
 end
 
+function M.plug_owner(rhs)
+  local idx = M._index
+  if not idx or not idx.by_plug or type(rhs) ~= "string" then
+    return nil
+  end
+  return idx.by_plug[rhs]
+end
+
 function M.plugin_of_path(path, dirs)
   if type(path) ~= "string" or path == "" then
     return nil
@@ -133,26 +125,50 @@ function M.plugin_of_path(path, dirs)
   return nil
 end
 
-function M.resolve(level)
+local USER = "$user"
+
+function M.user_path(path)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+  if path:sub(1, 1) == "@" then
+    path = path:sub(2)
+  end
+  local cfg = vim.fn.stdpath("config")
+  return path:sub(1, #cfg + 1) == cfg .. "/"
+end
+
+-- 呼び出し元パスの列から帰属先を決める。resolve から切り出してテスト可能にした
+function M.resolve_from(paths)
   local idx = M.index()
   if not idx then
     return nil
   end
-  local fallback = nil
-  for i = level or 2, 30 do
-    local info = debug.getinfo(i, "S")
-    if not info then
-      break
-    end
-    local name = M.plugin_of_path(info.source, idx.dirs)
+  local fallback, user = nil, nil
+  for _, path in ipairs(paths) do
+    local name = M.plugin_of_path(path, idx.dirs)
     if M.attributable(name) then
       if not UTILITY[name] then
         return name
       end
       fallback = fallback or name
+    elseif not user and M.user_path(path) then
+      user = USER
     end
   end
-  return fallback
+  return fallback or user
+end
+
+function M.resolve(level)
+  local paths = {}
+  for i = level or 2, 30 do
+    local info = debug.getinfo(i, "S")
+    if not info then
+      break
+    end
+    paths[#paths + 1] = info.source
+  end
+  return M.resolve_from(paths)
 end
 
 return M

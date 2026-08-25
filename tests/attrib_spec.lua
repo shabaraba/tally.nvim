@@ -1,27 +1,5 @@
 local attrib = require("tally.attrib")
 
-describe("attrib.rhs_kind", function()
-  it("classifies functions", function()
-    assert.equals("function", attrib.rhs_kind(function() end))
-  end)
-
-  it("classifies ex commands", function()
-    assert.equals("excmd", attrib.rhs_kind(":Telescope find_files <cr>"))
-    assert.equals("excmd", attrib.rhs_kind("<cmd>Trouble diagnostics toggle<cr>"))
-    assert.equals("excmd", attrib.rhs_kind("<Cmd>Oil<CR>"))
-  end)
-
-  it("classifies plug mappings", function()
-    assert.equals("plug", attrib.rhs_kind("<Plug>(YankyYank)"))
-    assert.equals("plug", attrib.rhs_kind("<plug>(nvim-surround-normal)"))
-  end)
-
-  it("classifies anything else as other", function()
-    assert.equals("other", attrib.rhs_kind("gg"))
-    assert.equals("other", attrib.rhs_kind(nil))
-  end)
-end)
-
 describe("attrib.parse_keys", function()
   it("handles a bare string entry as normal mode", function()
     local got = attrib.parse_keys({ "gs" })
@@ -34,7 +12,6 @@ describe("attrib.parse_keys", function()
     local got = attrib.parse_keys({ { "gs", function() end, mode = "x" } })
     assert.equals("gs", got[1].lhs)
     assert.equals("x", got[1].mode)
-    assert.equals("function", got[1].rhs_kind)
   end)
 
   it("expands a mode list into one entry per mode", function()
@@ -42,13 +19,11 @@ describe("attrib.parse_keys", function()
     assert.equals(2, #got)
     assert.equals("n", got[1].mode)
     assert.equals("v", got[2].mode)
-    assert.equals("plug", got[1].rhs_kind)
   end)
 
   it("defaults mode to n when absent", function()
     local got = attrib.parse_keys({ { ";f", ":Telescope find_files <cr>" } })
     assert.equals("n", got[1].mode)
-    assert.equals("excmd", got[1].rhs_kind)
   end)
 
   it("returns empty for non-table input", function()
@@ -97,12 +72,6 @@ describe("attrib.build", function()
   it("indexes commands", function()
     local idx = attrib.build(plugins)
     assert.equals("trouble.nvim", idx.by_cmd["Trouble"])
-  end)
-
-  it("records rhs kind counts per plugin", function()
-    local idx = attrib.build(plugins)
-    assert.equals(1, idx.kinds["telescope.nvim"]["excmd"])
-    assert.equals(1, idx.kinds["flash.nvim"]["function"])
   end)
 
   it("sorts dirs longest first", function()
@@ -155,5 +124,95 @@ describe("attrib.attributable", function()
 
   it("accepts a normal plugin", function()
     assert.is_true(attrib.attributable("flash.nvim"))
+  end)
+end)
+
+describe("attrib.plug_owner", function()
+  after_each(function()
+    attrib._index = nil
+  end)
+
+  it("resolves a <Plug> rhs declared in a lazy spec", function()
+    local idx = attrib.build({
+      {
+        name = "yanky.nvim",
+        dir = "/data/lazy/yanky.nvim",
+        keys = { { "y", "<Plug>(YankyYank)", mode = { "n", "x" } } },
+      },
+    })
+    assert.equals("yanky.nvim", idx.by_plug["<Plug>(YankyYank)"])
+    assert.equals("yanky.nvim", attrib.plug_owner("<Plug>(YankyYank)"))
+  end)
+
+  it("returns nil for an unknown <Plug>", function()
+    attrib.build({})
+    assert.is_nil(attrib.plug_owner("<Plug>(Unknown)"))
+  end)
+
+  it("returns nil when no index exists", function()
+    attrib._index = nil
+    assert.is_nil(attrib.plug_owner("<Plug>(Whatever)"))
+  end)
+end)
+
+describe("attrib.user_path", function()
+  it("recognises a file under the config dir", function()
+    local cfg = vim.fn.stdpath("config")
+    assert.is_true(attrib.user_path("@" .. cfg .. "/lua/keymaps.lua"))
+    assert.is_true(attrib.user_path(cfg .. "/init.lua"))
+  end)
+
+  it("rejects anything outside it", function()
+    assert.is_false(attrib.user_path("@/data/lazy/telescope.nvim/lua/x.lua"))
+    assert.is_false(attrib.user_path('@[string "luaeval"]'))
+    assert.is_false(attrib.user_path(nil))
+  end)
+end)
+
+describe("attrib.resolve with user config", function()
+  after_each(function()
+    attrib._index = nil
+  end)
+
+  it("falls back to $user for a caller in the config dir", function()
+    attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+    local cfg = vim.fn.stdpath("config")
+    assert.equals("$user", attrib.resolve_from({ "@" .. cfg .. "/lua/keymaps.lua" }))
+  end)
+
+  it("prefers a plugin over $user", function()
+    attrib._index = {
+      by_key = {},
+      by_cmd = {},
+      by_plug = {},
+      kinds = {},
+      dirs = { { dir = "/data/lazy/flash.nvim", name = "flash.nvim" } },
+    }
+    local cfg = vim.fn.stdpath("config")
+    assert.equals(
+      "flash.nvim",
+      attrib.resolve_from({ "@" .. cfg .. "/lua/keymaps.lua", "@/data/lazy/flash.nvim/lua/x.lua" })
+    )
+  end)
+
+  it("returns nil when nothing matches", function()
+    attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+    assert.is_nil(attrib.resolve_from({ "@/tmp/somewhere.lua" }))
+  end)
+
+  it("deliberately prefers a UTILITY-table plugin over $user, in either frame order", function()
+    attrib._index = {
+      by_key = {},
+      by_cmd = {},
+      by_plug = {},
+      kinds = {},
+      dirs = { { dir = "/data/lazy/plenary.nvim", name = "plenary.nvim" } },
+    }
+    local cfg = vim.fn.stdpath("config")
+    local user_frame = "@" .. cfg .. "/lua/keymaps.lua"
+    local utility_frame = "@/data/lazy/plenary.nvim/lua/x.lua"
+
+    assert.equals("plenary.nvim", attrib.resolve_from({ utility_frame, user_frame }))
+    assert.equals("plenary.nvim", attrib.resolve_from({ user_frame, utility_frame }))
   end)
 end)
