@@ -57,7 +57,7 @@ press shows up as unused.
 tally keys   142 sessions
 
 ■ 未使用  見直し候補
-       0  <leader>xx               $user
+       0  <leader>xx               -
        0  gr                       refactoring.nvim
 ■ 低頻度
        3  <leader>gs               $user
@@ -65,6 +65,10 @@ tally keys   142 sessions
     1204  jj                       $user
      892  <leader>ff               telescope.nvim
 ```
+
+A row that has never been pressed has no recorded owner, so the only owner
+tally can name for it is the one a lazy.nvim spec's `keys` list declares —
+`gr` above. Everything else in that group shows `-`.
 
 ## Configuration
 

@@ -1,6 +1,7 @@
 local config = require("tally.config")
 local report = require("tally.report")
 local store = require("tally.store")
+local track = require("tally.track")
 
 local M = {}
 
@@ -39,26 +40,45 @@ local function is_plug(lhs)
   return lhs:lower():match("^<plug>") ~= nil
 end
 
+-- lhs -> その lhs が効くモードの一覧。
+-- 一度も押されていない行の持ち主を lazy spec から引くのにモードが要る
 function M.existing()
   local out = {}
+  local function add(lhs, mode)
+    if is_plug(lhs) then
+      return
+    end
+    local modes = out[lhs]
+    if not modes then
+      out[lhs] = { mode }
+    elseif not vim.tbl_contains(modes, mode) then
+      modes[#modes + 1] = mode
+    end
+  end
+
   for _, mode in ipairs(MODES) do
     for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
-      if not is_plug(entry.lhs) then
-        out[entry.lhs] = true
-      end
+      add(entry.lhs, mode)
     end
     -- グローバルだけでなく、ロード中バッファのバッファローカルマッピングも対象にする
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) then
         for _, entry in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
-          if not is_plug(entry.lhs) then
-            out[entry.lhs] = true
-          end
+          add(entry.lhs, mode)
         end
       end
     end
   end
   return out
+end
+
+-- 押されたことがない行の持ち主は、lazy spec の keys 宣言からしか分からない。
+-- 分からないものを推測はしない
+function M.unused_owner(lhs, modes)
+  if type(modes) ~= "table" then
+    return "-"
+  end
+  return track.spec_owner(modes, lhs) or "-"
 end
 
 function M.classify(rows, existing, sessions)
@@ -88,7 +108,10 @@ function M.classify(rows, existing, sessions)
         table.insert(groups.high, row)
       end
     elseif existing[lhs] then
-      table.insert(groups.unused, row or { lhs = lhs, count = 0, owner = "-" })
+      table.insert(
+        groups.unused,
+        row or { lhs = lhs, count = 0, owner = M.unused_owner(lhs, existing[lhs]) }
+      )
     end
   end
 

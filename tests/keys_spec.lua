@@ -179,7 +179,7 @@ describe("keys.existing", function()
     vim.keymap.set("n", "gzk", "yy")
     vim.keymap.set("n", "<Plug>(TallyKeysProbe)", "yy")
     local existing = keys.existing()
-    assert.is_true(existing["gzk"])
+    assert.same({ "n" }, existing["gzk"])
     assert.is_nil(existing["<Plug>(TallyKeysProbe)"])
   end)
 
@@ -188,7 +188,66 @@ describe("keys.existing", function()
     vim.keymap.set("n", "gzb", "yy", { buffer = buf })
     vim.keymap.set("n", "<Plug>(TallyKeysBufProbe)", "yy", { buffer = buf })
     local existing = keys.existing()
-    assert.is_true(existing["gzb"])
+    assert.same({ "n" }, existing["gzb"])
     assert.is_nil(existing["<Plug>(TallyKeysBufProbe)"])
+  end)
+end)
+
+describe("keys.unused_owner", function()
+  before_each(function()
+    require("tally.attrib")._index = {
+      by_key = { n = { gr = "refactoring.nvim" } },
+      by_cmd = {},
+      by_plug = {},
+      dirs = {},
+    }
+  end)
+
+  after_each(function()
+    require("tally.attrib")._index = nil
+  end)
+
+  it("names the plugin whose lazy spec declares the lhs", function()
+    assert.equals("refactoring.nvim", keys.unused_owner("gr", { "n" }))
+  end)
+
+  it("falls back to - when no spec declares the lhs", function()
+    assert.equals("-", keys.unused_owner("<leader>xx", { "n" }))
+  end)
+
+  it("falls back to - when the mode list is missing", function()
+    assert.equals("-", keys.unused_owner("gr", true))
+  end)
+end)
+
+describe("keys unused row owners", function()
+  after_each(function()
+    pcall(vim.keymap.del, "x", "gzx")
+    pcall(vim.keymap.del, "n", "gzz")
+    require("tally.attrib")._index = nil
+  end)
+
+  local function owner_of(groups, lhs)
+    for _, r in ipairs(groups.unused) do
+      if r.lhs == lhs then
+        return r.owner
+      end
+    end
+  end
+
+  it("names the spec owner of a mapping that exists but was never pressed", function()
+    require("tally.attrib")._index = {
+      by_key = { x = { gzx = "refactoring.nvim" } },
+      by_cmd = {},
+      by_plug = {},
+      dirs = {},
+    }
+    vim.keymap.set("x", "gzx", "y")
+    vim.keymap.set("n", "gzz", "y")
+
+    local groups = keys.classify({}, keys.existing(), 100)
+    assert.equals("refactoring.nvim", owner_of(groups, "gzx"))
+    -- 宣言が無いものを推測はしない
+    assert.equals("-", owner_of(groups, "gzz"))
   end)
 end)
