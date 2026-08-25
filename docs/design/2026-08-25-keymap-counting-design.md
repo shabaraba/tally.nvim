@@ -114,6 +114,14 @@ lhs ではなく関数の同一性で判定する。同じ lhs が別モード�
 
 この修正は今回の変更とは独立した不具合の解消であり、コミットを分ける。
 
+### 3.5 `<Plug>` を lhs とするマッピングは包まない
+
+`<Plug>(...)` 自体を lhs とするマッピングはプラグインの内部実装であり、利用者が直接押すものではない。フック・`diff_and_wrap`・一掃のいずれでも包まない。
+
+包むと二重計上になる。`y` → `<Plug>(YankyYank)` という構成で両方を包むと、1回の押下が `y` と `<Plug>(YankyYank)` の2つの lhs で数えられ、プラグインの `key_total` が倍になる。数えるのは利用者が押す lhs の側だけでよい。
+
+現行の `wrap_existing` は `<Plug>` を包んでおり、`tests/track_hook_spec.lua` の「counts a press of a newly wrapped keymap」がそれを前提にしている。文字列 rhs を包むようになると二重計上が起きるため、除外の追加とあわせてこのテストを書き換える。
+
 ## 4. 帰属
 
 ### 4.1 `$user`
@@ -124,9 +132,31 @@ lhs ではなく関数の同一性で判定する。同じ lhs が別モード�
 
 `$user` は `:Tally` のロスターには含めない。`:TallyKeys` にのみ現れる。
 
-### 4.2 解決順序
+### 4.2 `<Plug>` を rhs とするマッピングの帰属
 
-既存の順序を変えない。lazy spec の `keys` 宣言（`spec_owner`）が最優先、外れた場合にスタック解決（`attrib.resolve`）へ落ちる。`$user` はスタック解決の末端に位置する。
+`<Plug>(...)` を rhs に持つマッピングは、`<Plug>` を提供したプラグインに帰属させる。呼び出し元ではない。
+
+lazy spec の `keys` で宣言されていれば `spec_owner` が解決する。だが `<Plug>` を利用者が自分の設定で直接マップする流儀は珍しくなく（yanky.nvim や nvim-surround が README で案内する形）、その場合スタック解決は `$user` を返す。プラグインの押下回数が 0 のままになり、本設計が塞ごうとしている穴が別経路で再発する。
+
+`diff_and_wrap` が `User LazyLoad` の差分から `<Plug>` の提供元を知れるので、そこで索引を作る。
+
+```lua
+idx.by_plug["<Plug>(YankyYank)"] = "yanky.nvim"
+```
+
+**帰属の解決は押下時に行う。** 利用者の設定は起動時に読まれるのに対し、`<Plug>` を提供するプラグインは遅延ロードで後から入る。ラップ時点では索引が空でありうる。
+
+```lua
+-- 文字列 rhs のラッパ内
+local owner = rhs:lower():match("^<plug>") and attrib.plug_owner(rhs) or plugin
+counter.add(owner, "key", lhs)
+```
+
+索引に無ければラップ時に決めた帰属先へ落ちる。テーブル参照1回なので押下ごとのコストは無視できる。
+
+### 4.3 解決順序
+
+既存の順序を変えない。lazy spec の `keys` 宣言（`spec_owner`）が最優先、外れた場合にスタック解決（`attrib.resolve`）へ落ちる。`$user` はスタック解決の末端に位置する。`<Plug>` を rhs に持つ場合のみ §4.2 が押下時に上書きする。
 
 ## 5. データモデル
 
@@ -212,7 +242,8 @@ tally keys   142 sessions
 - `tests/track_hook_spec.lua` に二重ラップの回帰テストを追加する。フックと `diff_and_wrap` の両方を通したマッピングを1回押して、カウントが1であること
 - `tests/track_spec.lua` に一掃ラップのテストを追加する。`setup()` 前に張ったマッピングが計測対象になること、`<Plug>` 接頭辞の lhs が除外されること
 - `tests/keys_spec.lua` を新設し、集計と現存マッピングの突き合わせ、分類、描画を検証する
-- `tests/attrib_spec.lua` に `$user` 解決のケースを追加し、`rhs_kind` のテストを削除する
+- `tests/attrib_spec.lua` に `$user` 解決と `plug_owner` のケースを追加し、`rhs_kind` のテストを削除する
+- `tests/track_hook_spec.lua` の「counts a press of a newly wrapped keymap」を書き換える。`<Plug>` lhs は包まれなくなるため
 - `tests/report_spec.lua` から `session_only` のテストを削除する
 
 ## 10. 影響範囲
@@ -220,7 +251,7 @@ tally keys   142 sessions
 | ファイル | 変更 |
 |---|---|
 | `lua/tally/track.lua` | 二重ラップの防止、文字列 rhs の expr ラップ、expr マッピングのラップ、起動時の一掃 |
-| `lua/tally/attrib.lua` | `$user` 解決の追加、`rhs_kind` と `kinds` の削除 |
+| `lua/tally/attrib.lua` | `$user` 解決の追加、`by_plug` 索引と `plug_owner`、`rhs_kind` と `kinds` の削除 |
 | `lua/tally/report.lua` | `session_only` と関連分類の削除 |
 | `lua/tally/keys.lua` | 新規 |
 | `lua/tally/init.lua` | `setup()` からの一掃呼び出し |
@@ -230,12 +261,13 @@ tally keys   142 sessions
 
 ## 11. 実装順序
 
-1. 二重ラップの防止（既存不具合の修正。単独でコミットする）
+1. 二重ラップの防止と `<Plug>` lhs の除外（既存不具合の修正。単独でコミットする）
 2. 文字列 rhs と expr マッピングのラップ
-3. 起動時の一掃ラップ
-4. `$user` 帰属
-5. `session_only` と `rhs_kind` の削除
-6. `:TallyKeys`
-7. ドキュメント
+3. `<Plug>` rhs の帰属（`by_plug` と `plug_owner`）
+4. 起動時の一掃ラップ
+5. `$user` 帰属
+6. `session_only` と `rhs_kind` の削除
+7. `:TallyKeys`
+8. ドキュメント
 
-1 を先に片付けないと、2 以降のカウントが検証できない。
+1 を先に片付けないと、2 以降のカウントが検証できない。3 は 2 が入って初めて意味を持つ（文字列 rhs を包まないうちは `<Plug>` を rhs に持つマッピングが計測対象に入らない）。
