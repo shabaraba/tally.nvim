@@ -519,3 +519,68 @@ describe("track no-op rhs", function()
     assert.equals(0, e.expr)
   end)
 end)
+
+describe("track owner upgrade", function()
+  local saved_set, saved_user_path
+  local SPEC_DIR = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))
+
+  local function entry_for(lhs)
+    for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
+      if e.lhs == lhs then
+        return e
+      end
+    end
+  end
+
+  before_each(function()
+    counter.drain()
+    saved_set = vim.keymap.set
+    saved_user_path = attrib.user_path
+    track._hooked = false
+    attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+  end)
+
+  after_each(function()
+    vim.keymap.set = saved_set
+    attrib.user_path = saved_user_path
+    track._hooked = false
+    pcall(vim.keymap.del, "n", "gzU")
+    pcall(vim.keymap.del, "n", "gzV")
+    attrib._index = nil
+  end)
+
+  it("credits the loading plugin, not $user, for a keymap set from the config dir", function()
+    -- 設定ディレクトリからの呼び出しを模す。フック時点では $user にしか解決できない
+    attrib.user_path = function()
+      return true
+    end
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+
+    local prev = track.snapshot()
+    vim.keymap.set("n", "gzU", function() end)
+    track.diff_and_wrap("telescope.nvim", prev)
+
+    local e = entry_for("gzU")
+    assert.is_table(e)
+    e.callback()
+
+    assert.equals(1, counter.peek()["telescope.nvim"].key["gzU"])
+    assert.is_nil(counter.peek()["$user"])
+  end)
+
+  it("does not overwrite a wrapper that already names a real plugin", function()
+    attrib._index.dirs = { { dir = SPEC_DIR, name = "flash.nvim" } }
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+
+    local prev = track.snapshot()
+    vim.keymap.set("n", "gzV", function() end)
+    track.diff_and_wrap("telescope.nvim", prev)
+
+    local e = entry_for("gzV")
+    assert.is_table(e)
+    e.callback()
+
+    assert.equals(1, counter.peek()["flash.nvim"].key["gzV"])
+    assert.is_nil(counter.peek()["telescope.nvim"])
+  end)
+end)

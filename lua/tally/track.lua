@@ -8,6 +8,11 @@ M.wrapped_cmds = {}
 -- ラップ済みのコールバック。関数の同一性で判定するので lhs の衝突に強い
 M._wrapped = setmetatable({}, { __mode = "k" })
 
+-- ラッパ -> 可変の帰属セル。遅延ロードで持ち主が後から判明するため
+M._owner = setmetatable({}, { __mode = "k" })
+
+local USER = "$user"
+
 function M.mark_wrapped(fn)
   M._wrapped[fn] = true
   return fn
@@ -17,23 +22,37 @@ function M.is_plug_lhs(lhs)
   return type(lhs) == "string" and lhs:lower():match("^<plug>") ~= nil
 end
 
+-- $user 止まりの帰属だけを、後から判明したプラグインへ格上げする。
+-- 実在のプラグイン名が入っているセルは上書きしない
+function M.upgrade_owner(fn, plugin)
+  local cell = M._owner[fn]
+  if cell and cell.plugin == USER and attrib.attributable(plugin) and plugin ~= USER then
+    cell.plugin = plugin
+  end
+end
+
 -- 押下を数えるラッパ。文字列 rhs は expr 化して元の文字列をそのまま返す
 function M.make_wrapper(plugin, lhs, rhs)
+  local cell = { plugin = plugin }
+  local fn
   if type(rhs) == "function" then
-    return M.mark_wrapped(function(...)
-      counter.add(plugin, "key", lhs)
+    fn = function(...)
+      counter.add(cell.plugin, "key", lhs)
       return rhs(...)
-    end)
+    end
+  else
+    -- <Plug> の提供元は遅延ロードで後から判明するので押下時に引く
+    local plug = rhs:lower():match("^<plug>") and rhs or nil
+    fn = function()
+      local owner = plug and attrib.plug_owner(plug) or nil
+      -- 緩めたゲート越しに来た plugin は未フィルタなので、fallback 側でも弾く
+      local fallback = attrib.attributable(cell.plugin) and cell.plugin or nil
+      counter.add(attrib.attributable(owner) and owner or fallback, "key", lhs)
+      return rhs
+    end
   end
-  -- <Plug> の提供元は遅延ロードで後から判明するので押下時に引く
-  local plug = rhs:lower():match("^<plug>") and rhs or nil
-  return M.mark_wrapped(function()
-    local owner = plug and attrib.plug_owner(plug) or nil
-    -- 緩めたゲート越しに来た plugin は未フィルタなので、fallback 側でも弾く
-    local fallback = attrib.attributable(plugin) and plugin or nil
-    counter.add(attrib.attributable(owner) and owner or fallback, "key", lhs)
-    return rhs
-  end)
+  M._owner[fn] = cell
+  return M.mark_wrapped(fn)
 end
 
 function M.extract_cmd_name(line)
@@ -159,11 +178,18 @@ local function wrap_existing(mode, entry, plugin)
   if M.is_plug_lhs(entry.lhs) then
     return
   end
+
+  local lhs = entry.lhs
+  plugin = M.spec_owner(mode, lhs) or plugin
+
+  -- ラップ済みなら張り直さない。ただし $user 止まりの帰属だけは格上げする。
+  -- 設定ディレクトリから張られたプラグインのマッピングは、フック時点では
+  -- $user にしか解決できず、LazyLoad の差分で初めて持ち主が分かる
   if entry.callback and M._wrapped[entry.callback] then
+    M.upgrade_owner(entry.callback, plugin)
     return
   end
 
-  local lhs = entry.lhs
   local rhs, expr
   if type(entry.callback) == "function" then
     rhs, expr = entry.callback, entry.expr == 1
@@ -173,7 +199,6 @@ local function wrap_existing(mode, entry, plugin)
     return
   end
 
-  plugin = M.spec_owner(mode, lhs) or plugin
   if not attrib.attributable(plugin) then
     return
   end
@@ -225,7 +250,7 @@ function M.sweep(opts)
   end
   for _, mode in ipairs(MODES) do
     for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
-      wrap_existing(mode, entry, "$user")
+      wrap_existing(mode, entry, USER)
     end
   end
 end
