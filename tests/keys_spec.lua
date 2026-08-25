@@ -51,13 +51,26 @@ describe("keys.classify", function()
     )
   end)
 
-  it("uses a threshold of at least 1", function()
-    local groups = keys.classify(
-      { ["gd"] = { lhs = "gd", count = 1, owner = "x" } },
-      { gd = true },
-      0
+  it("pins the low/high boundary at sessions = 20 (threshold = floor(20 * 0.1) = 2)", function()
+    local rows = {
+      ["below"] = { lhs = "below", count = 1, owner = "x" },
+      ["at"] = { lhs = "at", count = 2, owner = "x" },
+    }
+    local existing = { below = true, at = true }
+    local groups = keys.classify(rows, existing, 20)
+
+    assert.same(
+      { "below" },
+      vim.tbl_map(function(r)
+        return r.lhs
+      end, groups.low)
     )
-    assert.equals(1, #groups.high)
+    assert.same(
+      { "at" },
+      vim.tbl_map(function(r)
+        return r.lhs
+      end, groups.high)
+    )
   end)
 
   it("drops rows whose mapping no longer exists", function()
