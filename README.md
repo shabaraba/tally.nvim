@@ -44,10 +44,26 @@ tally   142 sessions
   vim-mql5                         0 sess  key 0      cmd 0      last -
 ■ 低頻度
   refactoring.nvim                 3 sess  key 4      cmd 0      last 2026-06-12
-■ セッション粒度のみ  <Plug> のため押下回数なし
-  yanky.nvim                     138 sess  key 0      cmd 0      last 2026-08-24
 ■ 常用
+  yanky.nvim                     138 sess  key 47     cmd 0      last 2026-08-24
   telescope.nvim                 141 sess  key 12     cmd 892    last 2026-08-24
+```
+
+`:TallyKeys` breaks the same data down per keymap, crossing the stored counts
+against the mappings that currently exist so a mapping you defined and never
+press shows up as unused.
+
+```
+tally keys   142 sessions
+
+■ 未使用  見直し候補
+       0  <leader>xx               $user
+       0  gr                       refactoring.nvim
+■ 低頻度
+       3  <leader>gs               $user
+■ 常用
+    1204  jj                       $user
+     892  <leader>ff               telescope.nvim
 ```
 
 ## Configuration
@@ -78,8 +94,31 @@ Attribution comes from three sources, most precise first:
    and the caller is resolved by walking the stack to the owning plugin
    directory.
 
-Counting only ever wraps a Lua callback. String right-hand sides, `expr`
-mappings, and string command definitions are passed through untouched.
+A press that cannot be attributed to a plugin this way — because it came from
+your own config, or because the startup sweep found a pre-existing mapping it
+could not match to a plugin — is credited to `$user`. `$user` shows up as an
+owner in `:TallyKeys`; it never appears in `:Tally`, whose plugin list is
+built only from your lazy.nvim specs.
+
+Keymaps are counted by wrapping them. A Lua callback is wrapped directly. A
+string right-hand side is re-registered as an `expr` mapping that returns the
+original string unchanged. The original `noremap` flag is preserved across
+that swap, which is what keeps `<Plug>` still expanding while `nnoremap Y y$`
+still does not; counts, registers, operator-pending and `operatorfunc` all
+keep working. A string right-hand side that is also marked `expr` is left
+alone, since that string is a Vimscript expression to evaluate, not a key
+sequence.
+
+`<Plug>` never appears as a left-hand side — it is plugin-internal, so only
+the user-facing left-hand side is counted. A `<Plug>` mapping you wrote
+yourself is credited to the plugin that provides it, not to you, which
+matters because several plugins ask you to map their `<Plug>` mappings from
+your own config.
+
+Global mappings that predate the hook, including Neovim's own defaults, are
+wrapped in a single sweep during `setup()` — measured at 389 mappings in
+2.14-2.80 ms, so the sweep runs synchronously. Buffer-local mappings are not
+part of that sweep; see Limitations.
 
 ## What gets recorded
 
@@ -93,8 +132,19 @@ safely.
 
 ## Limitations
 
-- Keymaps whose right-hand side is `<Plug>(...)` are counted per session, not per
-  press. Wrapping them would change operator-pending semantics.
+- Repeating with `.` is not counted. It does not go through the mapping.
+- A right-hand side that is a string *and* marked `expr` is left alone. That
+  string is an expression to evaluate, not a key sequence.
+- Buffer-local mappings are counted only when set with `vim.keymap.set` after
+  the hook is installed. The startup sweep covers global mappings that
+  predate the hook, but not buffer-local ones, so a pre-existing buffer-local
+  mapping — or one set through a lower-level API such as
+  `nvim_buf_set_keymap` — is never counted.
+- `:TallyKeys` can only see buffer-local mappings in buffers that are
+  currently loaded. An unpressed buffer-local mapping in a buffer that is not
+  open right now is simply missing from the report, not shown as used. One
+  that has been pressed still appears under its frequency group even while
+  its buffer is closed.
 - Commands defined as Vimscript strings fall back to counting typed invocations.
 - Direct Lua API calls are not counted.
 - lazy.nvim only.

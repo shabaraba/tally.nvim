@@ -52,6 +52,13 @@ tally.setup({opts})
                                                                       *:Tally*
 :Tally                  Open the usage report in a new tab.
 
+                                                                  *:TallyKeys*
+:TallyKeys              Open the keymap usage report in a new tab. Breaks
+                        the same data down per keymap, crossing the stored
+                        counts against the mappings that currently exist so
+                        a mapping you defined and never press shows up as
+                        unused.
+
 ==============================================================================
 5. CONFIGURATION                                          *tally-configuration*
 
@@ -75,7 +82,19 @@ leaves the machine.
 ==============================================================================
 7. LIMITATIONS                                              *tally-limitations*
 
-  - <Plug> keymaps are counted per session, not per press.
+  - Repeating with `.` is not counted. It does not go through the mapping.
+  - A right-hand side that is a string and also marked `expr` is left
+    alone. That string is an expression to evaluate, not a key sequence.
+  - Buffer-local mappings are counted only when set with |vim.keymap.set()|
+    after the hook is installed. The startup sweep covers global mappings
+    that predate the hook, but not buffer-local ones, so a pre-existing
+    buffer-local mapping -- or one set through a lower-level API such as
+    |nvim_buf_set_keymap()| -- is never counted.
+  - |:TallyKeys| can only see buffer-local mappings in buffers that are
+    currently loaded. An unpressed buffer-local mapping in a buffer that is
+    not open right now is simply missing from the report, not shown as
+    used. One that has been pressed still appears under its frequency
+    group even while its buffer is closed.
   - Vimscript-defined commands fall back to typed invocations only.
   - Direct Lua API calls are not counted.
   - lazy.nvim only.
