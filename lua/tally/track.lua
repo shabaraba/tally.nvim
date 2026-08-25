@@ -76,8 +76,11 @@ local function hook_keymap_set()
   vim.keymap.set = function(mode, lhs, rhs, opts)
     local key = type(lhs) == "table" and lhs[1] or lhs
     local is_expr = opts and opts.expr
+    -- <Nop> を剥がすのは do_map であって replace_termcodes ではない。
+    -- expr 化すると "<Nop>" の 5 文字がそのまま打鍵として実行されてしまう
+    local is_nop = type(rhs) == "string" and rhs:lower() == "<nop>"
     local wrappable = (type(rhs) == "function")
-      or (type(rhs) == "string" and rhs ~= "" and not is_expr)
+      or (type(rhs) == "string" and rhs ~= "" and not is_nop and not is_expr)
 
     if wrappable and not M.is_plug_lhs(key) then
       local plugin = M.spec_owner(mode, key) or attrib.resolve(3)

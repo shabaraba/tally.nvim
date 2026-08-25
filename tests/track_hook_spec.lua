@@ -432,3 +432,90 @@ describe("track <Plug> attribution", function()
     end
   )
 end)
+
+describe("track no-op rhs", function()
+  local saved_set
+
+  local function entry_for(lhs)
+    for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
+      if e.lhs == lhs then
+        return e
+      end
+    end
+  end
+
+  before_each(function()
+    counter.drain()
+    saved_set = vim.keymap.set
+    track._hooked = false
+    attrib._index = {
+      by_key = { n = { gzN = "fake.nvim", gzM = "fake.nvim", gzE = "fake.nvim" } },
+      by_cmd = {},
+      by_plug = {},
+      kinds = {},
+      dirs = {},
+    }
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { "  hello world" })
+  end)
+
+  after_each(function()
+    vim.keymap.set = saved_set
+    track._hooked = false
+    for _, lhs in ipairs({ "gzN", "gzM", "gzE", "gzX" }) do
+      pcall(vim.keymap.del, "n", lhs)
+    end
+    attrib._index = nil
+  end)
+
+  it("leaves a <Nop> rhs as a plain string mapping", function()
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    vim.keymap.set("n", "gzN", "<Nop>", { silent = true })
+
+    local e = entry_for("gzN")
+    assert.is_table(e)
+    assert.is_nil(e.callback)
+    assert.equals(0, e.expr)
+  end)
+
+  it("leaves a lowercase <nop> rhs as a plain string mapping", function()
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    vim.keymap.set("n", "gzM", "<nop>", { silent = true })
+
+    local e = entry_for("gzM")
+    assert.is_table(e)
+    assert.is_nil(e.callback)
+    assert.equals(0, e.expr)
+  end)
+
+  it("does not let a <Nop> press touch the buffer", function()
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    vim.keymap.set("n", "gzN", "<Nop>", { silent = true })
+
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys(vim.keycode("gzN"), "x", false)
+
+    assert.same({ "  hello world" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
+    assert.is_nil(counter.peek()["fake.nvim"])
+  end)
+
+  it("leaves an empty rhs alone at the hook", function()
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    vim.keymap.set("n", "gzE", "", { silent = true })
+
+    local e = entry_for("gzE")
+    assert.is_table(e)
+    assert.is_nil(e.callback)
+    assert.equals(0, e.expr)
+  end)
+
+  it("leaves an empty rhs alone in the sweep", function()
+    track.orig_keymap_set = nil
+    vim.api.nvim_set_keymap("n", "gzX", "", { silent = true })
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
+
+    local e = entry_for("gzX")
+    assert.is_table(e)
+    assert.is_nil(e.callback)
+    assert.equals(0, e.expr)
+  end)
+end)
