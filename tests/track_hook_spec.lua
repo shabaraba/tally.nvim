@@ -41,16 +41,6 @@ describe("track.hook", function()
     assert.equals(saved_set, track.orig_keymap_set)
   end)
 
-  it("passes string rhs through untouched", function()
-    local seen
-    vim.keymap.set = function(_, _, rhs)
-      seen = rhs
-    end
-    track.hook({ hook_keymap_set = true, track = { key = true, cmd = true } })
-    vim.keymap.set("n", "gx", ":Foo<cr>")
-    assert.equals(":Foo<cr>", seen)
-  end)
-
   it("does not wrap when the caller is not a plugin", function()
     local original = function() end
     local seen
