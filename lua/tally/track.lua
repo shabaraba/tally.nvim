@@ -204,6 +204,19 @@ function M.diff_and_wrap(plugin, prev)
   return M.snapshot()
 end
 
+-- early() より前から存在するマッピングを包み直す。
+-- Neovim 標準のマッピングや、フック設置前に読まれた設定が対象
+function M.sweep(opts)
+  if not opts.track.key then
+    return
+  end
+  for _, mode in ipairs(MODES) do
+    for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
+      wrap_existing(mode, entry, "$user")
+    end
+  end
+end
+
 function M.attach(opts)
   local group = vim.api.nvim_create_augroup("TallyTrack", { clear = true })
   local snap = M.snapshot()

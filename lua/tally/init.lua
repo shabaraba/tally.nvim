@@ -37,6 +37,7 @@ function M.setup(opts)
 
   track.hook(cfg)
   track.attach(cfg)
+  track.sweep(cfg)
 
   local group = vim.api.nvim_create_augroup("Tally", { clear = true })
 
