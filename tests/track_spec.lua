@@ -51,7 +51,7 @@ describe("track.sweep", function()
 
   it("wraps a keymap that existed before the hook", function()
     vim.keymap.set("n", "gzs", "yy", { noremap = true })
-    track.sweep({ track = { key = true } })
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
 
     vim.api.nvim_win_set_cursor(0, { 1, 0 })
     vim.api.nvim_feedkeys(vim.keycode("gzs"), "x", false)
@@ -61,7 +61,7 @@ describe("track.sweep", function()
 
   it("leaves <Plug> lhs alone", function()
     vim.keymap.set("n", "<Plug>(TallySweep)", "yy", { noremap = true })
-    track.sweep({ track = { key = true } })
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
 
     local entry
     for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
@@ -75,7 +75,7 @@ describe("track.sweep", function()
 
   it("does nothing when key tracking is off", function()
     vim.keymap.set("n", "gzs", "yy", { noremap = true })
-    track.sweep({ track = { key = false } })
+    track.sweep({ hook_keymap_set = true, track = { key = false } })
 
     local entry
     for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
@@ -83,6 +83,20 @@ describe("track.sweep", function()
         entry = e
       end
     end
+    assert.is_nil(entry.callback)
+  end)
+
+  it("does nothing when hook_keymap_set is off", function()
+    vim.keymap.set("n", "gzs", "yy", { noremap = true })
+    track.sweep({ hook_keymap_set = false, track = { key = true } })
+
+    local entry
+    for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
+      if e.lhs == "gzs" then
+        entry = e
+      end
+    end
+    assert.is_table(entry)
     assert.is_nil(entry.callback)
   end)
 end)

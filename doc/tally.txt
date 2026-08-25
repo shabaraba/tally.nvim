@@ -68,9 +68,22 @@ flush_interval  number  Seconds between flushes. Default: 300
 passive         table   Lua patterns matched as substrings against plugin
                         names. Matching plugins are excluded from the usage
                         verdict. Default: {}
-hook_keymap_set boolean Hook |vim.keymap.set| to catch buffer-local keymaps.
-                        Default: true
+hook_keymap_set boolean Whether tally may rewrite mappings outside a plugin
+                        load. Default: true
 track           table   { load = true, cmd = true, key = true }
+
+Two switches turn keymap measurement off, and they are not the same switch.
+
+`track.key = false` stops all keymap counting. No mapping is wrapped by any
+route, and |:TallyKeys| has nothing to report but the mappings that exist.
+
+`hook_keymap_set = false` stops tally from rewriting mappings outside a
+plugin load. It leaves |vim.keymap.set()| unhooked, so mappings you or a
+plugin set are registered exactly as written, and it also skips the sweep
+that |tally.setup()| would otherwise run, so no pre-existing mapping is
+touched. Mappings a plugin registers while lazy-loading are still wrapped,
+because that path is driven by the `User LazyLoad` diff rather than the
+hook. Set both to `false` to leave every mapping in the editor untouched.
 
 ==============================================================================
 6. PRIVACY                                                      *tally-privacy*
@@ -85,6 +98,16 @@ leaves the machine.
   - Repeating with `.` is not counted. It does not go through the mapping.
   - A right-hand side that is a string and also marked `expr` is left
     alone. That string is an expression to evaluate, not a key sequence.
+    Such a mapping still shows up in |:TallyKeys| under the unused group,
+    because tally can see that it exists but can never see it pressed.
+  - A `<Nop>` right-hand side is left alone and never counted.
+  - A global mapping created after |tally.setup()| outside a plugin load --
+    through |nvim_set_keymap()|, a `:nnoremap` in a Vimscript file sourced
+    later, or a `:map` typed at runtime -- is never wrapped. The sweep has
+    already run and the `User LazyLoad` diff only covers mappings a
+    lazy-loading plugin registers. Such a mapping appears in |:TallyKeys|
+    under the unused group with owner `-`, indistinguishable from a
+    mapping you genuinely never press.
   - Buffer-local mappings are counted only when set with |vim.keymap.set()|
     after the hook is installed. The startup sweep covers global mappings
     that predate the hook, but not buffer-local ones, so a pre-existing

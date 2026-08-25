@@ -245,7 +245,9 @@ end
 -- early() より前から存在するマッピングを包み直す。
 -- Neovim 標準のマッピングや、フック設置前に読まれた設定が対象
 function M.sweep(opts)
-  if not opts.track.key then
+  -- エディタ中の全マッピングを張り直す最も侵襲的な経路なので、
+  -- hook_keymap_set を切った利用者の意図どおり黙る
+  if not opts.track.key or not opts.hook_keymap_set then
     return
   end
   for _, mode in ipairs(MODES) do
