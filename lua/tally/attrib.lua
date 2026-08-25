@@ -54,7 +54,7 @@ function M.parse_keys(keys)
     if type(lhs) == "string" then
       local modes = type(mode) == "table" and mode or { mode }
       for _, m in ipairs(modes) do
-        out[#out + 1] = { lhs = lhs, mode = m, rhs_kind = M.rhs_kind(rhs) }
+        out[#out + 1] = { lhs = lhs, mode = m, rhs = rhs, rhs_kind = M.rhs_kind(rhs) }
       end
     end
   end
@@ -88,7 +88,7 @@ function M.build(plugins)
     return nil
   end
 
-  local idx = { by_key = {}, by_cmd = {}, dirs = {}, kinds = {} }
+  local idx = { by_key = {}, by_cmd = {}, by_plug = {}, dirs = {}, kinds = {} }
   for _, p in ipairs(plugins) do
     if p.name then
       if p.dir then
@@ -97,6 +97,9 @@ function M.build(plugins)
       for _, k in ipairs(M.parse_keys(p.keys)) do
         idx.by_key[k.mode] = idx.by_key[k.mode] or {}
         idx.by_key[k.mode][k.lhs] = p.name
+        if type(k.rhs) == "string" and k.rhs:lower():match("^<plug>") then
+          idx.by_plug[k.rhs] = p.name
+        end
         idx.kinds[p.name] = idx.kinds[p.name] or {}
         idx.kinds[p.name][k.rhs_kind] = (idx.kinds[p.name][k.rhs_kind] or 0) + 1
       end
@@ -116,6 +119,14 @@ end
 
 function M.index()
   return M._index or M.build()
+end
+
+function M.plug_owner(rhs)
+  local idx = M._index
+  if not idx or not idx.by_plug or type(rhs) ~= "string" then
+    return nil
+  end
+  return idx.by_plug[rhs]
 end
 
 function M.plugin_of_path(path, dirs)

@@ -157,3 +157,31 @@ describe("attrib.attributable", function()
     assert.is_true(attrib.attributable("flash.nvim"))
   end)
 end)
+
+describe("attrib.plug_owner", function()
+  after_each(function()
+    attrib._index = nil
+  end)
+
+  it("resolves a <Plug> rhs declared in a lazy spec", function()
+    local idx = attrib.build({
+      {
+        name = "yanky.nvim",
+        dir = "/data/lazy/yanky.nvim",
+        keys = { { "y", "<Plug>(YankyYank)", mode = { "n", "x" } } },
+      },
+    })
+    assert.equals("yanky.nvim", idx.by_plug["<Plug>(YankyYank)"])
+    assert.equals("yanky.nvim", attrib.plug_owner("<Plug>(YankyYank)"))
+  end)
+
+  it("returns nil for an unknown <Plug>", function()
+    attrib.build({})
+    assert.is_nil(attrib.plug_owner("<Plug>(Unknown)"))
+  end)
+
+  it("returns nil when no index exists", function()
+    attrib._index = nil
+    assert.is_nil(attrib.plug_owner("<Plug>(Whatever)"))
+  end)
+end)

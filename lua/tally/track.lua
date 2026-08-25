@@ -25,8 +25,11 @@ function M.make_wrapper(plugin, lhs, rhs)
       return rhs(...)
     end)
   end
+  -- <Plug> の提供元は遅延ロードで後から判明するので押下時に引く
+  local plug = rhs:lower():match("^<plug>") and rhs or nil
   return M.mark_wrapped(function()
-    counter.add(plugin, "key", lhs)
+    local owner = plug and attrib.plug_owner(plug) or nil
+    counter.add(attrib.attributable(owner) and owner or plugin, "key", lhs)
     return rhs
   end)
 end
@@ -76,7 +79,9 @@ local function hook_keymap_set()
 
     if wrappable and not M.is_plug_lhs(key) then
       local plugin = M.spec_owner(mode, key) or attrib.resolve(3)
-      if attrib.attributable(plugin) then
+      -- <Plug> の rhs は帰属を押下時に引き直すので、宣言元が解決できなくても包む
+      local rhs_is_plug = type(rhs) == "string" and M.is_plug_lhs(rhs)
+      if attrib.attributable(plugin) or rhs_is_plug then
         if type(rhs) == "string" then
           opts = opts and vim.deepcopy(opts) or {}
           opts.expr = true
@@ -183,7 +188,13 @@ function M.diff_and_wrap(plugin, prev)
   for _, mode in ipairs(MODES) do
     for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
       if not prev.keys[mode][entry.lhs] then
-        wrap_existing(mode, entry, plugin)
+        if M.is_plug_lhs(entry.lhs) then
+          if idx and idx.by_plug and not idx.by_plug[entry.lhs] then
+            idx.by_plug[entry.lhs] = plugin
+          end
+        else
+          wrap_existing(mode, entry, plugin)
+        end
       end
     end
   end

@@ -6,6 +6,7 @@ local function fake_index()
   attrib._index = {
     by_key = {},
     by_cmd = {},
+    by_plug = {},
     kinds = {},
     dirs = { { dir = "/data/lazy/fake.nvim", name = "fake.nvim" } },
   }
@@ -376,5 +377,39 @@ describe("track string rhs wrapping", function()
     track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
     vim.keymap.set("n", "gzc", "line('.') > 1 ? 'k' : 'j'", { expr = true })
     assert.equals("line('.') > 1 ? 'k' : 'j'", seen)
+  end)
+end)
+
+describe("track <Plug> attribution", function()
+  local saved_set
+
+  before_each(function()
+    counter.drain()
+    saved_set = vim.keymap.set
+    track._hooked = false
+    attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { "hello world" })
+  end)
+
+  after_each(function()
+    vim.keymap.set = saved_set
+    track._hooked = false
+    pcall(vim.keymap.del, "n", "gzp")
+    pcall(vim.keymap.del, "n", "<Plug>(TallyLate)")
+    attrib._index = nil
+  end)
+
+  it("credits the plugin that provides the <Plug>, not the caller", function()
+    track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+    track.orig_keymap_set("n", "<Plug>(TallyLate)", "yy", { noremap = true })
+    vim.keymap.set("n", "gzp", "<Plug>(TallyLate)", { remap = true })
+
+    -- 索引はマッピングを張ったあとに埋まる。遅延ロードを模す
+    attrib._index.by_plug["<Plug>(TallyLate)"] = "late.nvim"
+
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys(vim.keycode("gzp"), "x", false)
+
+    assert.equals(1, counter.peek()["late.nvim"].key["gzp"])
   end)
 end)
