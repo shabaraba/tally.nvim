@@ -17,8 +17,9 @@ function M.collect(agg)
         rows[lhs] = row
       end
       row.count = row.count + n
-      -- 同じ lhs が複数プラグインに帰属した履歴がある場合は回数の多い側を採る
-      if n > row.top then
+      -- 同じ lhs が複数プラグインに帰属した履歴がある場合は回数の多い側を採る。
+      -- 同数なら pairs() の走査順に依存しないよう名前の昇順で決定的に選ぶ
+      if n > row.top or (n == row.top and plugin < row.owner) then
         row.top, row.owner = n, plugin
       end
     end
@@ -29,12 +30,26 @@ function M.collect(agg)
   return rows
 end
 
+local function is_plug(lhs)
+  return lhs:lower():match("^<plug>") ~= nil
+end
+
 function M.existing()
   local out = {}
   for _, mode in ipairs(MODES) do
     for _, entry in ipairs(vim.api.nvim_get_keymap(mode)) do
-      if not entry.lhs:lower():match("^<plug>") then
+      if not is_plug(entry.lhs) then
         out[entry.lhs] = true
+      end
+    end
+    -- グローバルだけでなく、ロード中バッファのバッファローカルマッピングも対象にする
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(buf) then
+        for _, entry in ipairs(vim.api.nvim_buf_get_keymap(buf, mode)) do
+          if not is_plug(entry.lhs) then
+            out[entry.lhs] = true
+          end
+        end
       end
     end
   end
@@ -45,14 +60,30 @@ function M.classify(rows, existing, sessions)
   local groups = { unused = {}, low = {}, high = {} }
   local threshold = math.max(1, math.floor(sessions * LOW_RATIO))
 
+  -- unused は「今バインドされているのに一度も押されていない」ものだけを対象にする
+  -- （現存しないマッピングを未使用として出しても意味がない）。
+  -- low/high は逆に、いま現存するかどうかに関わらず記録された回数で決める
+  -- （バッファローカルな束縛は、そのバッファが開かれていないと existing に現れないため）。
+  local candidates = {}
   for lhs in pairs(existing) do
-    local row = rows[lhs] or { lhs = lhs, count = 0, owner = "-" }
-    if row.count == 0 then
-      table.insert(groups.unused, row)
-    elseif row.count < threshold then
-      table.insert(groups.low, row)
-    else
-      table.insert(groups.high, row)
+    candidates[lhs] = true
+  end
+  for lhs, row in pairs(rows) do
+    if row.count > 0 then
+      candidates[lhs] = true
+    end
+  end
+
+  for lhs in pairs(candidates) do
+    local row = rows[lhs]
+    if row and row.count > 0 then
+      if row.count < threshold then
+        table.insert(groups.low, row)
+      else
+        table.insert(groups.high, row)
+      end
+    elseif existing[lhs] then
+      table.insert(groups.unused, row or { lhs = lhs, count = 0, owner = "-" })
     end
   end
 

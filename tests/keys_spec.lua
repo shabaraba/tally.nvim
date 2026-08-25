@@ -20,6 +20,18 @@ describe("keys.collect", function()
   it("returns an empty table for an empty aggregate", function()
     assert.same({}, keys.collect({ sessions = 0, plugins = {} }))
   end)
+
+  it("breaks an owner tie deterministically by plugin name ascending", function()
+    local agg = {
+      sessions = 10,
+      plugins = {
+        ["zzz.nvim"] = { key = { ["<leader>tt"] = 7 } },
+        ["aaa.nvim"] = { key = { ["<leader>tt"] = 7 } },
+      },
+    }
+    local rows = keys.collect(agg)
+    assert.equals("aaa.nvim", rows["<leader>tt"].owner)
+  end)
 end)
 
 describe("keys.classify", function()
@@ -73,10 +85,21 @@ describe("keys.classify", function()
     )
   end)
 
-  it("drops rows whose mapping no longer exists", function()
-    local rows = { ["gone"] = { lhs = "gone", count = 50, owner = "$user" } }
+  it("keeps a pressed row whose mapping is gone, but drops an unpressed one", function()
+    -- バッファローカルな束縛は、そのバッファが閉じていると existing に出てこない。
+    -- count > 0 の行は existing になくても low/high に残るべきで、
+    -- count == 0 かつ existing にもない行だけが行き場を失ってよい。
+    local rows = {
+      ["pressed"] = { lhs = "pressed", count = 50, owner = "$user" },
+      ["never"] = { lhs = "never", count = 0, owner = "$user" },
+    }
     local groups = keys.classify(rows, {}, 100)
-    assert.equals(0, #groups.high)
+    assert.same(
+      { "pressed" },
+      vim.tbl_map(function(r)
+        return r.lhs
+      end, groups.high)
+    )
     assert.equals(0, #groups.low)
     assert.equals(0, #groups.unused)
   end)
@@ -116,9 +139,15 @@ describe("keys.render", function()
 end)
 
 describe("keys.existing", function()
+  local buf
+
   after_each(function()
     pcall(vim.keymap.del, "n", "gzk")
     pcall(vim.keymap.del, "n", "<Plug>(TallyKeysProbe)")
+    if buf then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+      buf = nil
+    end
   end)
 
   it("lists real mappings and skips <Plug>", function()
@@ -127,5 +156,12 @@ describe("keys.existing", function()
     local existing = keys.existing()
     assert.is_true(existing["gzk"])
     assert.is_nil(existing["<Plug>(TallyKeysProbe)"])
+  end)
+
+  it("includes buffer-local mappings from loaded buffers", function()
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.keymap.set("n", "gzb", "yy", { buffer = buf })
+    local existing = keys.existing()
+    assert.is_true(existing["gzb"])
   end)
 end)
