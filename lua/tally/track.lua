@@ -29,7 +29,9 @@ function M.make_wrapper(plugin, lhs, rhs)
   local plug = rhs:lower():match("^<plug>") and rhs or nil
   return M.mark_wrapped(function()
     local owner = plug and attrib.plug_owner(plug) or nil
-    counter.add(attrib.attributable(owner) and owner or plugin, "key", lhs)
+    -- 緩めたゲート越しに来た plugin は未フィルタなので、fallback 側でも弾く
+    local fallback = attrib.attributable(plugin) and plugin or nil
+    counter.add(attrib.attributable(owner) and owner or fallback, "key", lhs)
     return rhs
   end)
 end

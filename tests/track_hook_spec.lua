@@ -396,6 +396,8 @@ describe("track <Plug> attribution", function()
     track._hooked = false
     pcall(vim.keymap.del, "n", "gzp")
     pcall(vim.keymap.del, "n", "<Plug>(TallyLate)")
+    pcall(vim.keymap.del, "n", "gzu")
+    pcall(vim.keymap.del, "n", "<Plug>(TallyUnresolved)")
     attrib._index = nil
   end)
 
@@ -412,4 +414,21 @@ describe("track <Plug> attribution", function()
 
     assert.equals(1, counter.peek()["late.nvim"].key["gzp"])
   end)
+
+  it(
+    "never credits an unattributable fallback plugin when the <Plug> owner never resolves",
+    function()
+      -- by_key の lhs が tally.nvim に衝突すると、spec_owner がその名前を返す
+      attrib._index.by_key = { n = { gzu = "tally.nvim" } }
+      track.hook({ hook_keymap_set = true, track = { key = true, cmd = false } })
+      track.orig_keymap_set("n", "<Plug>(TallyUnresolved)", "yy", { noremap = true })
+      vim.keymap.set("n", "gzu", "<Plug>(TallyUnresolved)", { remap = true })
+
+      -- by_plug は空のまま。押下時に提供元が見つからないケースを模す
+      vim.api.nvim_win_set_cursor(0, { 1, 0 })
+      vim.api.nvim_feedkeys(vim.keycode("gzu"), "x", false)
+
+      assert.is_nil(counter.peek()["tally.nvim"])
+    end
+  )
 end)
