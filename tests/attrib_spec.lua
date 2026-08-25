@@ -230,4 +230,20 @@ describe("attrib.resolve with user config", function()
     attrib._index = { by_key = {}, by_cmd = {}, by_plug = {}, kinds = {}, dirs = {} }
     assert.is_nil(attrib.resolve_from({ "@/tmp/somewhere.lua" }))
   end)
+
+  it("deliberately prefers a UTILITY-table plugin over $user, in either frame order", function()
+    attrib._index = {
+      by_key = {},
+      by_cmd = {},
+      by_plug = {},
+      kinds = {},
+      dirs = { { dir = "/data/lazy/plenary.nvim", name = "plenary.nvim" } },
+    }
+    local cfg = vim.fn.stdpath("config")
+    local user_frame = "@" .. cfg .. "/lua/keymaps.lua"
+    local utility_frame = "@/data/lazy/plenary.nvim/lua/x.lua"
+
+    assert.equals("plenary.nvim", attrib.resolve_from({ utility_frame, user_frame }))
+    assert.equals("plenary.nvim", attrib.resolve_from({ user_frame, utility_frame }))
+  end)
 end)
