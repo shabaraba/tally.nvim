@@ -41,12 +41,12 @@ it command tracking falls back to typed `:` commands only.
 tally   142 sessions
 
 ■ 未ロード  削除候補
-  vim-mql5                         0 sess  key 0      cmd 0      last -
+  vim-mql5                           0 sess  key 0      cmd 0      last -
 ■ 低頻度
-  refactoring.nvim                 3 sess  key 4      cmd 0      last 2026-06-12
+  refactoring.nvim                   3 sess  key 4      cmd 0      last 2026-06-12
 ■ 常用
-  yanky.nvim                     138 sess  key 47     cmd 0      last 2026-08-24
-  telescope.nvim                 141 sess  key 12     cmd 892    last 2026-08-24
+  yanky.nvim                       138 sess  key 47     cmd 0      last 2026-08-24
+  telescope.nvim                   141 sess  key 12     cmd 892    last 2026-08-24
 ```
 
 `:TallyKeys` breaks the same data down per keymap, crossing the stored counts
@@ -111,9 +111,15 @@ sequence.
 
 `<Plug>` never appears as a left-hand side — it is plugin-internal, so only
 the user-facing left-hand side is counted. A `<Plug>` mapping you wrote
-yourself is credited to the plugin that provides it, not to you, which
-matters because several plugins ask you to map their `<Plug>` mappings from
-your own config.
+yourself is credited to the plugin that provides it once tally knows which
+plugin that is: either a lazy.nvim spec's `keys` list already names that
+exact `<Plug>` string, or tally saw the plugin register it while firing its
+own `User LazyLoad`. Until then, the press is still counted — just credited
+to whoever wrote your mapping (typically `$user`) instead of the provider.
+A plugin that finished loading before `tally.setup()` installed the
+`LazyLoad` watcher is never picked up that second way, so for it a `keys`
+declaration is the only route to correct attribution for the rest of the
+session.
 
 Global mappings that predate the hook, including Neovim's own defaults, are
 wrapped in a single sweep during `setup()` — measured at 389 mappings in
