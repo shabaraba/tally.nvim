@@ -36,28 +36,8 @@ function M.aggregate(records)
   return agg
 end
 
--- 押下回数を計測できない構成か。keys が <Plug> のみで、コマンドも持たない場合
-function M.session_only(plugin, idx)
-  local kinds = idx.kinds and idx.kinds[plugin]
-  if not kinds then
-    return false
-  end
-  if (kinds["function"] or 0) > 0 or (kinds.excmd or 0) > 0 then
-    return false
-  end
-  if (kinds.plug or 0) == 0 then
-    return false
-  end
-  for _, owner in pairs(idx.by_cmd or {}) do
-    if owner == plugin then
-      return false
-    end
-  end
-  return true
-end
-
-function M.classify(agg, roster, idx)
-  local groups = { unloaded = {}, low = {}, high = {}, passive = {}, session_only = {} }
+function M.classify(agg, roster)
+  local groups = { unloaded = {}, low = {}, high = {}, passive = {} }
   local threshold = math.max(1, math.floor(agg.sessions * LOW_RATIO))
 
   for _, name in ipairs(roster) do
@@ -77,8 +57,6 @@ function M.classify(agg, roster, idx)
         table.insert(groups.unloaded, row)
       elseif p.sessions < threshold then
         table.insert(groups.low, row)
-      elseif M.session_only(name, idx) then
-        table.insert(groups.session_only, row)
       else
         table.insert(groups.high, row)
       end
@@ -121,19 +99,12 @@ function M.render(agg, groups)
   local lines = { ("tally   %d sessions"):format(agg.sessions) }
   append_group(lines, "未ロード", groups.unloaded, "削除候補")
   append_group(lines, "低頻度", groups.low)
-  append_group(
-    lines,
-    "セッション粒度のみ",
-    groups.session_only,
-    "<Plug> のため押下回数なし"
-  )
   append_group(lines, "常用", groups.high)
   append_group(lines, "passive", groups.passive, "判定対象外")
   return lines
 end
 
 function M.show()
-  local idx = attrib.index() or { by_cmd = {}, kinds = {}, dirs = {} }
   local roster = {}
   local ok, lazy = pcall(require, "lazy")
   if ok then
@@ -145,7 +116,7 @@ function M.show()
   end
 
   local agg = M.aggregate(store.read_all(config.options.store_dir))
-  local lines = M.render(agg, M.classify(agg, roster, idx))
+  local lines = M.render(agg, M.classify(agg, roster))
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)

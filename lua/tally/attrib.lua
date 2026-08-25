@@ -22,23 +22,6 @@ end
 
 M._index = nil
 
-function M.rhs_kind(rhs)
-  if type(rhs) == "function" then
-    return "function"
-  end
-  if type(rhs) ~= "string" then
-    return "other"
-  end
-  local lower = rhs:lower()
-  if lower:match("^%s*:") or lower:match("^<cmd>") then
-    return "excmd"
-  end
-  if lower:match("^<plug>") then
-    return "plug"
-  end
-  return "other"
-end
-
 function M.parse_keys(keys)
   local out = {}
   if type(keys) ~= "table" then
@@ -54,7 +37,7 @@ function M.parse_keys(keys)
     if type(lhs) == "string" then
       local modes = type(mode) == "table" and mode or { mode }
       for _, m in ipairs(modes) do
-        out[#out + 1] = { lhs = lhs, mode = m, rhs = rhs, rhs_kind = M.rhs_kind(rhs) }
+        out[#out + 1] = { lhs = lhs, mode = m, rhs = rhs }
       end
     end
   end
@@ -88,7 +71,7 @@ function M.build(plugins)
     return nil
   end
 
-  local idx = { by_key = {}, by_cmd = {}, by_plug = {}, dirs = {}, kinds = {} }
+  local idx = { by_key = {}, by_cmd = {}, by_plug = {}, dirs = {} }
   for _, p in ipairs(plugins) do
     if p.name then
       if p.dir then
@@ -100,8 +83,6 @@ function M.build(plugins)
         if type(k.rhs) == "string" and k.rhs:lower():match("^<plug>") then
           idx.by_plug[k.rhs] = p.name
         end
-        idx.kinds[p.name] = idx.kinds[p.name] or {}
-        idx.kinds[p.name][k.rhs_kind] = (idx.kinds[p.name][k.rhs_kind] or 0) + 1
       end
       for _, c in ipairs(M.parse_cmd(p.cmd)) do
         idx.by_cmd[c] = p.name
