@@ -59,6 +59,16 @@ tally.setup({opts})
                         a mapping you defined and never press shows up as
                         unused.
 
+                        Left-hand sides are normalized before counting:
+                        `<leader>` is expanded, `<C-w>` and `<C-W>` fold
+                        together, and a raw space is spelled `<Space>`.
+
+                        Rows tally cannot name an owner for, and rows owned
+                        by a `passive` plugin, are reported as separate
+                        counts in the header rather than listed. Mappings
+                        shipped by Neovim itself are neither measured nor
+                        inventoried.
+
 ==============================================================================
 5. CONFIGURATION                                          *tally-configuration*
 
@@ -67,7 +77,8 @@ store_dir       string  Where the JSONL records live.
 flush_interval  number  Seconds between flushes. Default: 300
 passive         table   Lua patterns matched as substrings against plugin
                         names. Matching plugins are excluded from the usage
-                        verdict. Default: {}
+                        verdict, in |:Tally| and |:TallyKeys| alike.
+                        Default: {}
 hook_keymap_set boolean Whether tally may rewrite mappings outside a plugin
                         load. Default: true
 track           table   { load = true, cmd = true, key = true }

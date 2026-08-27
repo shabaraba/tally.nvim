@@ -178,3 +178,51 @@ describe("track.sweep mode preservation", function()
     assert.same({ "i->!", "c->!" }, shape("<F10>"))
   end)
 end)
+
+describe("track.sweep runtime mappings", function()
+  -- Neovim 同梱のマッピングと同じ形（callback が runtime 由来）を人工的に作る
+  local function runtime_fn()
+    return load("return function() end", "@" .. vim.env.VIMRUNTIME .. "/lua/vim/_defaults.lua")()
+  end
+
+  after_each(function()
+    pcall(vim.keymap.del, "n", "gzrt")
+    track.orig_keymap_set = nil
+  end)
+
+  it("leaves a mapping defined by the Neovim runtime alone", function()
+    local fn = runtime_fn()
+    vim.keymap.set("n", "gzrt", fn)
+    track.sweep({ hook_keymap_set = true, track = { key = true } })
+
+    for _, e in ipairs(vim.api.nvim_get_keymap("n")) do
+      if e.lhs == "gzrt" then
+        assert.equals(fn, e.callback)
+      end
+    end
+  end)
+end)
+
+describe("track.owner_of", function()
+  it("returns the plugin recorded when the mapping was wrapped", function()
+    assert.equals("oil.nvim", track.owner_of(track.make_wrapper("oil.nvim", "-", "yy")))
+  end)
+
+  it("returns nil for anything it never wrapped", function()
+    assert.is_nil(track.owner_of(function() end))
+    assert.is_nil(track.owner_of("yy"))
+  end)
+end)
+
+describe("track.make_wrapper", function()
+  before_each(function()
+    counter.reset()
+    attrib._index = nil
+  end)
+
+  it("records the press under the canonical lhs", function()
+    local fn = track.make_wrapper("smart-splits.nvim", "<C-w>h", function() end)
+    fn()
+    assert.equals(1, counter.peek()["smart-splits.nvim"].key["<C-W>h"])
+  end)
+end)

@@ -1,5 +1,40 @@
 local attrib = require("tally.attrib")
 
+-- source が runtime 配下になる関数を作る。実在の runtime 関数に頼ると、
+-- Neovim 側の実装が Lua から C へ移っただけでテストが壊れる
+local function runtime_fn()
+  return load("return function() end", "@" .. vim.env.VIMRUNTIME .. "/lua/vim/_defaults.lua")()
+end
+
+describe("attrib.runtime_path", function()
+  it("recognizes a path under VIMRUNTIME", function()
+    assert.is_true(attrib.runtime_path("@" .. vim.env.VIMRUNTIME .. "/lua/vim/_defaults.lua"))
+  end)
+
+  it("recognizes an embedded runtime chunk name", function()
+    -- ランタイムが埋め込まれたビルドでは source が絶対パスにならない
+    assert.is_true(attrib.runtime_path("@vim/_core/defaults"))
+  end)
+
+  it("rejects a plugin path and a non-path", function()
+    assert.is_false(attrib.runtime_path("/data/lazy/oil.nvim/lua/oil.lua"))
+    assert.is_false(attrib.runtime_path("/data/lazy/vim/lua/x.lua"))
+    assert.is_false(attrib.runtime_path(""))
+    assert.is_false(attrib.runtime_path(nil))
+  end)
+end)
+
+describe("attrib.runtime_fn", function()
+  it("detects a function defined under VIMRUNTIME", function()
+    assert.is_true(attrib.runtime_fn(runtime_fn()))
+  end)
+
+  it("rejects a function defined elsewhere and a non-function", function()
+    assert.is_false(attrib.runtime_fn(function() end))
+    assert.is_false(attrib.runtime_fn("yy"))
+  end)
+end)
+
 describe("attrib.parse_keys", function()
   it("handles a bare string entry as normal mode", function()
     local got = attrib.parse_keys({ "gs" })

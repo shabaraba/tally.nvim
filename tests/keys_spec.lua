@@ -1,20 +1,31 @@
+local config = require("tally.config")
 local keys = require("tally.keys")
 
+-- collect が受け取る agg は report.aggregate が正規化済みの key を入れて返す
 describe("keys.collect", function()
   it("flattens per-plugin key counts into lhs rows", function()
     local agg = {
       sessions = 100,
       plugins = {
-        ["telescope.nvim"] = { key = { ["<leader>ff"] = 12 } },
-        ["$user"] = { key = { ["jj"] = 300, ["<leader>ff"] = 3 } },
+        ["telescope.nvim"] = { key = { ["<Space>ff"] = 12 } },
+        ["$user"] = { key = { ["jj"] = 300, ["<Space>ff"] = 3 } },
       },
     }
     local rows = keys.collect(agg)
     assert.equals(300, rows["jj"].count)
     assert.equals("$user", rows["jj"].owner)
     -- 同じ lhs が両方に記録されていたら回数の多い側を持ち主とする
-    assert.equals(15, rows["<leader>ff"].count)
-    assert.equals("telescope.nvim", rows["<leader>ff"].owner)
+    assert.equals(15, rows["<Space>ff"].count)
+    assert.equals("telescope.nvim", rows["<Space>ff"].owner)
+  end)
+
+  it("counts a press attributed to lazy.nvim but never names it as the owner", function()
+    local rows = keys.collect({
+      sessions = 10,
+      plugins = { ["lazy.nvim"] = { key = { gs = 1 } } },
+    })
+    assert.equals(1, rows["gs"].count)
+    assert.equals("-", rows["gs"].owner)
   end)
 
   it("returns an empty table for an empty aggregate", function()
@@ -27,12 +38,12 @@ describe("keys.collect", function()
     local agg = {
       sessions = 10,
       plugins = {
-        ["zzz.nvim"] = { key = { ["<leader>tt"] = 7 } },
-        ["aaa.nvim"] = { key = { ["<leader>tt"] = 7 } },
+        ["zzz.nvim"] = { key = { ["<Space>tt"] = 7 } },
+        ["aaa.nvim"] = { key = { ["<Space>tt"] = 7 } },
       },
     }
     local rows = keys.collect(agg)
-    assert.equals("aaa.nvim", rows["<leader>tt"].owner)
+    assert.equals("aaa.nvim", rows["<Space>tt"].owner)
   end)
 end)
 
@@ -60,32 +71,31 @@ describe("keys.better_owner", function()
 end)
 
 describe("keys.classify", function()
+  local function lhs_of(list)
+    return vim.tbl_map(function(r)
+      return r.lhs
+    end, list)
+  end
+
+  after_each(function()
+    config.setup({})
+  end)
+
   it("splits by press count against the session threshold", function()
     local rows = {
       ["jj"] = { lhs = "jj", count = 300, owner = "$user" },
       ["<leader>gs"] = { lhs = "<leader>gs", count = 3, owner = "$user" },
     }
-    local existing = { ["jj"] = true, ["<leader>gs"] = true, ["<leader>xx"] = true }
+    local existing = {
+      ["jj"] = { modes = { "n" }, owner = "$user" },
+      ["<leader>gs"] = { modes = { "n" }, owner = "$user" },
+      ["<leader>xx"] = { modes = { "n" }, owner = "$user" },
+    }
     local groups = keys.classify(rows, existing, 100)
 
-    assert.same(
-      { "jj" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.high)
-    )
-    assert.same(
-      { "<leader>gs" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.low)
-    )
-    assert.same(
-      { "<leader>xx" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.unused)
-    )
+    assert.same({ "jj" }, lhs_of(groups.high))
+    assert.same({ "<leader>gs" }, lhs_of(groups.low))
+    assert.same({ "<leader>xx" }, lhs_of(groups.unused))
   end)
 
   it("pins the low/high boundary at sessions = 20 (threshold = floor(20 * 0.1) = 2)", function()
@@ -93,21 +103,12 @@ describe("keys.classify", function()
       ["below"] = { lhs = "below", count = 1, owner = "x" },
       ["at"] = { lhs = "at", count = 2, owner = "x" },
     }
-    local existing = { below = true, at = true }
+    local existing = { below = { modes = { "n" } }, at = { modes = { "n" } } }
     local groups = keys.classify(rows, existing, 20)
 
-    assert.same(
-      { "below" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.low)
-    )
-    assert.same(
-      { "at" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.high)
-    )
+    assert.same({ "below" }, lhs_of(groups.low))
+    assert.same({ "at" }, lhs_of(groups.high))
+    assert.equals(2, groups.threshold)
   end)
 
   it("keeps a pressed row whose mapping is gone, but drops an unpressed one", function()
@@ -119,14 +120,27 @@ describe("keys.classify", function()
       ["never"] = { lhs = "never", count = 0, owner = "$user" },
     }
     local groups = keys.classify(rows, {}, 100)
-    assert.same(
-      { "pressed" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.high)
-    )
+    assert.same({ "pressed" }, lhs_of(groups.high))
     assert.equals(0, #groups.low)
     assert.equals(0, #groups.unused)
+  end)
+
+  it("hides an unpressed mapping whose owner is unknown, but counts it", function()
+    -- 持ち主が分からない行は「見直し候補」として読めない。
+    -- 消したことを黙らないよう件数だけは残す
+    local groups = keys.classify({}, { ["gzz"] = { modes = { "n" } } }, 100)
+    assert.equals(0, #groups.unused)
+    assert.same({ unknown = 1, passive = 0 }, groups.hidden)
+  end)
+
+  it("hides passive owners from the usage groups too", function()
+    config.setup({ passive = { "nui" } })
+    local rows = { ["<C-B>"] = { lhs = "<C-B>", count = 245, owner = "nui.nvim" } }
+    local existing = { ["<C-B>"] = { modes = { "n" }, owner = "nui.nvim" } }
+    local groups = keys.classify(rows, existing, 100)
+    assert.equals(0, #groups.high)
+    -- 帰属不明と passive は理由が違うので、まとめずに数える
+    assert.same({ unknown = 0, passive = 1 }, groups.hidden)
   end)
 
   it("sorts by count desc then lhs asc", function()
@@ -135,31 +149,47 @@ describe("keys.classify", function()
       ["a"] = { lhs = "a", count = 5, owner = "x" },
       ["c"] = { lhs = "c", count = 9, owner = "x" },
     }
-    local groups = keys.classify(rows, { a = true, b = true, c = true }, 10)
-    assert.same(
-      { "c", "a", "b" },
-      vim.tbl_map(function(r)
-        return r.lhs
-      end, groups.high)
-    )
+    local existing = {
+      a = { modes = { "n" } },
+      b = { modes = { "n" } },
+      c = { modes = { "n" } },
+    }
+    local groups = keys.classify(rows, existing, 10)
+    assert.same({ "c", "a", "b" }, lhs_of(groups.high))
   end)
 end)
 
 describe("keys.render", function()
   it("prints a header and only non-empty groups", function()
     local groups = {
-      unused = { { lhs = "<leader>xx", count = 0, owner = "$user" } },
+      unused = { { lhs = "<Space>xx", count = 0, owner = "$user" } },
       low = {},
       high = { { lhs = "jj", count = 300, owner = "$user" } },
+      threshold = 14,
+      hidden = { unknown = 0, passive = 0 },
     }
     local lines = keys.render(142, groups)
-    assert.equals("tally keys   142 sessions", lines[1])
+    assert.equals("tally keys   142 sessions   低頻度 < 14 回", lines[1])
 
     local text = table.concat(lines, "\n")
     assert.is_truthy(text:find("未使用", 1, true))
-    assert.is_truthy(text:find("<leader>xx", 1, true))
+    assert.is_truthy(text:find("<Space>xx", 1, true))
     assert.is_truthy(text:find("jj", 1, true))
-    assert.is_nil(text:find("低頻度", 1, true))
+    assert.is_nil(text:find("非表示", 1, true))
+    -- 見出しとしての「低頻度」はグループが空なので出ない
+    assert.is_nil(text:find("■ 低頻度", 1, true))
+  end)
+
+  it("states how many rows were hidden and why", function()
+    local groups = {
+      unused = {},
+      low = {},
+      high = {},
+      threshold = 10,
+      hidden = { unknown = 5, passive = 2 },
+    }
+    local lines = keys.render(100, groups)
+    assert.equals("  7 行は非表示（帰属不明 5 / passive 2）", lines[2])
   end)
 end)
 
@@ -179,7 +209,7 @@ describe("keys.existing", function()
     vim.keymap.set("n", "gzk", "yy")
     vim.keymap.set("n", "<Plug>(TallyKeysProbe)", "yy")
     local existing = keys.existing()
-    assert.same({ "n" }, existing["gzk"])
+    assert.same({ "n" }, existing["gzk"].modes)
     assert.is_nil(existing["<Plug>(TallyKeysProbe)"])
   end)
 
@@ -188,8 +218,15 @@ describe("keys.existing", function()
     vim.keymap.set("n", "gzb", "yy", { buffer = buf })
     vim.keymap.set("n", "<Plug>(TallyKeysBufProbe)", "yy", { buffer = buf })
     local existing = keys.existing()
-    assert.same({ "n" }, existing["gzb"])
+    assert.same({ "n" }, existing["gzb"].modes)
     assert.is_nil(existing["<Plug>(TallyKeysBufProbe)"])
+  end)
+
+  it("normalizes the lhs it reports", function()
+    vim.keymap.set("n", "<C-w>gzk", "yy")
+    local existing = keys.existing()
+    assert.is_truthy(existing["<C-W>gzk"])
+    pcall(vim.keymap.del, "n", "<C-w>gzk")
   end)
 end)
 
@@ -208,11 +245,15 @@ describe("keys.unused_owner", function()
   end)
 
   it("names the plugin whose lazy spec declares the lhs", function()
-    assert.equals("refactoring.nvim", keys.unused_owner("gr", { "n" }))
+    assert.equals("refactoring.nvim", keys.unused_owner("gr", { modes = { "n" } }))
   end)
 
-  it("falls back to - when no spec declares the lhs", function()
-    assert.equals("-", keys.unused_owner("<leader>xx", { "n" }))
+  it("falls back to the owner recorded when the mapping was wrapped", function()
+    assert.equals("$user", keys.unused_owner("gzz", { modes = { "n" }, owner = "$user" }))
+  end)
+
+  it("falls back to - when nothing knows the lhs", function()
+    assert.equals("-", keys.unused_owner("<leader>xx", { modes = { "n" } }))
   end)
 
   it("falls back to - when the mode list is missing", function()
@@ -247,7 +288,7 @@ describe("keys unused row owners", function()
 
     local groups = keys.classify({}, keys.existing(), 100)
     assert.equals("refactoring.nvim", owner_of(groups, "gzx"))
-    -- 宣言が無いものを推測はしない
-    assert.equals("-", owner_of(groups, "gzz"))
+    -- 宣言も帰属セルも無いものを推測はしない。候補にも出さない
+    assert.is_nil(owner_of(groups, "gzz"))
   end)
 end)

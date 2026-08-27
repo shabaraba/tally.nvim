@@ -2,6 +2,7 @@ local M = {}
 
 local attrib = require("tally.attrib")
 local counter = require("tally.counter")
+local lhs_mod = require("tally.lhs")
 
 M.wrapped_cmds = {}
 
@@ -34,10 +35,12 @@ end
 -- 押下を数えるラッパ。文字列 rhs は expr 化して元の文字列をそのまま返す
 function M.make_wrapper(plugin, lhs, rhs)
   local cell = { plugin = plugin }
+  -- 記録に残す表記はここで一度だけ正規形へ寄せる
+  local key = lhs_mod.canonical(lhs)
   local fn
   if type(rhs) == "function" then
     fn = function(...)
-      counter.add(cell.plugin, "key", lhs)
+      counter.add(cell.plugin, "key", key)
       return rhs(...)
     end
   else
@@ -47,12 +50,18 @@ function M.make_wrapper(plugin, lhs, rhs)
       local owner = plug and attrib.plug_owner(plug) or nil
       -- 緩めたゲート越しに来た plugin は未フィルタなので、fallback 側でも弾く
       local fallback = attrib.attributable(cell.plugin) and cell.plugin or nil
-      counter.add(attrib.attributable(owner) and owner or fallback, "key", lhs)
+      counter.add(attrib.attributable(owner) and owner or fallback, "key", key)
       return rhs
     end
   end
   M._owner[fn] = cell
   return M.mark_wrapped(fn)
+end
+
+-- 一度も押されていないマッピングの持ち主は、包んだ時点の帰属セルにしか残っていない
+function M.owner_of(fn)
+  local cell = M._owner[fn]
+  return cell and cell.plugin or nil
 end
 
 function M.extract_cmd_name(line)
@@ -67,7 +76,9 @@ function M.extract_cmd_name(line)
   return s:match("^(%a[%w_]*)")
 end
 
-local MODES = { "n", "v", "x", "s", "o", "i", "c", "t" }
+-- 包む側とレポート側が同じモード集合を見ないと、計測範囲と在庫がずれる
+M.MODES = { "n", "v", "x", "s", "o", "i", "c", "t" }
+local MODES = M.MODES
 
 M._hooked = false
 M.orig_keymap_set = nil
@@ -80,8 +91,9 @@ function M.spec_owner(mode, lhs)
     return nil
   end
   local modes = type(mode) == "table" and mode or { mode }
+  local key = lhs_mod.canonical(lhs)
   for _, m in ipairs(modes) do
-    local owner = idx.by_key[m] and idx.by_key[m][lhs]
+    local owner = idx.by_key[m] and idx.by_key[m][key]
     if owner then
       return owner
     end
@@ -176,6 +188,12 @@ end
 
 local function wrap_existing(mode, entry, plugin)
   if M.is_plug_lhs(entry.lhs) then
+    return
+  end
+
+  -- Neovim 同梱のマッピングは計測しない。包まなければ記録も帰属も残らず、
+  -- レポートの「未使用」が defaults.lua 由来の行で埋まらずに済む
+  if attrib.runtime_fn(entry.callback) then
     return
   end
 
