@@ -7,7 +7,7 @@ describe("tally.flush", function()
   local dir
 
   before_each(function()
-    counter.drain()
+    counter.reset()
     dir = vim.fn.tempname()
     config.setup({ store_dir = dir })
   end)
@@ -49,7 +49,7 @@ describe("tally.record_session", function()
   local dir
 
   before_each(function()
-    counter.drain()
+    counter.reset()
     dir = vim.fn.tempname()
     config.setup({ store_dir = dir })
   end)

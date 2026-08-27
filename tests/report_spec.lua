@@ -34,6 +34,17 @@ describe("report.aggregate", function()
   it("sums command counts", function()
     assert.equals(4, report.aggregate(records).plugins["telescope.nvim"].cmd_total)
   end)
+
+  it("folds key spellings that differ only in notation", function()
+    -- <C-w>h と <C-W>h は同じキー。宣言側と nvim_get_keymap 側で表記が割れる
+    local agg = report.aggregate({
+      { t = 1, p = "smart-splits.nvim", key = { ["<C-w>h"] = 70 } },
+      { t = 2, p = "smart-splits.nvim", key = { ["<C-W>h"] = 5 } },
+    })
+    local p = agg.plugins["smart-splits.nvim"]
+    assert.equals(75, p.key["<C-W>h"])
+    assert.equals(1, vim.tbl_count(p.key))
+  end)
 end)
 
 describe("report.classify", function()
@@ -80,12 +91,13 @@ end)
 describe("report.render", function()
   it("produces lines including a header and every group heading", function()
     local agg = { sessions = 10, plugins = {} }
-    local groups = { unloaded = {}, low = {}, high = {}, passive = {} }
-    local lines = report.render(agg, groups)
+    local lines = report.render(agg, report.classify(agg, {}))
     assert.is_true(#lines > 0)
     local text = table.concat(lines, "\n")
     assert.is_truthy(text:find("tally"))
     assert.is_truthy(text:find("10 sessions"))
+    -- 何回ロードされたら「常用」なのかを読み手に示す
+    assert.is_truthy(text:find("低頻度 < 1 sess", 1, true))
   end)
 end)
 

@@ -1,3 +1,5 @@
+local lhs_mod = require("tally.lhs")
+
 local M = {}
 
 -- UI 部品を提供するだけのプラグイン。呼び出し元候補としては後回しにする
@@ -37,7 +39,7 @@ function M.parse_keys(keys)
     if type(lhs) == "string" then
       local modes = type(mode) == "table" and mode or { mode }
       for _, m in ipairs(modes) do
-        out[#out + 1] = { lhs = lhs, mode = m, rhs = rhs }
+        out[#out + 1] = { lhs = lhs_mod.canonical(lhs), mode = m, rhs = rhs }
       end
     end
   end
@@ -110,15 +112,21 @@ function M.plug_owner(rhs)
   return idx.by_plug[rhs]
 end
 
+-- Lua のチャンク名は "@" 始まりのパスで渡ってくる
+local function strip_at(path)
+  return path:sub(1, 1) == "@" and path:sub(2) or path
+end
+
+local function under(path, root)
+  if type(path) ~= "string" or path == "" or type(root) ~= "string" or root == "" then
+    return false
+  end
+  return strip_at(path):sub(1, #root + 1) == root .. "/"
+end
+
 function M.plugin_of_path(path, dirs)
-  if type(path) ~= "string" or path == "" then
-    return nil
-  end
-  if path:sub(1, 1) == "@" then
-    path = path:sub(2)
-  end
   for _, d in ipairs(dirs or {}) do
-    if path:sub(1, #d.dir + 1) == d.dir .. "/" then
+    if under(path, d.dir) then
       return d.name
     end
   end
@@ -126,16 +134,30 @@ function M.plugin_of_path(path, dirs)
 end
 
 local USER = "$user"
+local RUNTIME = vim.env.VIMRUNTIME
+local CONFIG = vim.fn.stdpath("config")
 
-function M.user_path(path)
-  if type(path) ~= "string" or path == "" then
+-- Neovim 同梱のマッピング（runtime/lua/vim/_defaults.lua など）は棚卸しの対象ではない。
+-- ユーザーが張ったものと同じ土俵に並べると「使っていないキー」が埋もれる
+function M.runtime_path(path)
+  -- 同梱ランタイムが埋め込まれている場合、チャンク名は絶対パスではなく
+  -- モジュール名（@vim/_core/defaults）になる
+  if type(path) == "string" and path ~= "" and strip_at(path):sub(1, 4) == "vim/" then
+    return true
+  end
+  return under(path, RUNTIME)
+end
+
+function M.runtime_fn(fn)
+  if type(fn) ~= "function" then
     return false
   end
-  if path:sub(1, 1) == "@" then
-    path = path:sub(2)
-  end
-  local cfg = vim.fn.stdpath("config")
-  return path:sub(1, #cfg + 1) == cfg .. "/"
+  local info = debug.getinfo(fn, "S")
+  return info ~= nil and M.runtime_path(info.source)
+end
+
+function M.user_path(path)
+  return under(path, CONFIG)
 end
 
 -- 呼び出し元パスの列から帰属先を決める。resolve から切り出してテスト可能にした

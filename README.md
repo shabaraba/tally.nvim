@@ -38,7 +38,7 @@ it command tracking falls back to typed `:` commands only.
 `:Tally` opens the report.
 
 ```
-tally   142 sessions
+tally   142 sessions   低頻度 < 14 sess
 
 ■ 未ロード  削除候補
   vim-mql5                           0 sess  key 0      cmd 0      last -
@@ -54,21 +54,32 @@ against the mappings that currently exist so a mapping you defined and never
 press shows up as unused.
 
 ```
-tally keys   142 sessions
+tally keys   142 sessions   低頻度 < 14 回
+  21 行は非表示（帰属不明 4 / passive 17）
 
 ■ 未使用  見直し候補
-       0  <leader>xx               -
+       0  <Space>xx                trouble.nvim
        0  gr                       refactoring.nvim
 ■ 低頻度
-       3  <leader>gs               $user
+       3  <Space>gs                $user
 ■ 常用
     1204  jj                       $user
-     892  <leader>ff               telescope.nvim
+     892  <Space>ff                telescope.nvim
 ```
 
-A row that has never been pressed has no recorded owner, so the only owner
-tally can name for it is the one a lazy.nvim spec's `keys` list declares —
-`gr` above. Everything else in that group shows `-`.
+The lhs is normalized before anything is counted: `<leader>` is expanded the way
+`vim.keymap.set` expands it, `<C-w>h` and `<C-W>h` fold together, and a raw space
+is spelled `<Space>`. Without that, one key splits into several rows because the
+declaration and `nvim_get_keymap` spell it differently.
+
+A row that has never been pressed carries no press record, so its owner comes
+from a lazy.nvim spec's `keys` list or from the attribution tally stored when it
+wrapped the mapping. Rows whose owner stays unknown, and rows owned by a
+`passive` plugin, are counted in the header line instead of being listed — "you
+never press this mapping" is only actionable when it says whose mapping it is.
+The two are counted separately, because only one of them is something you chose.
+Mappings Neovim itself ships are neither measured nor inventoried, so `grn` and
+friends never reach the report at all.
 
 ## Configuration
 
@@ -83,8 +94,10 @@ require("tally").setup({
 ```
 
 `passive` holds Lua patterns matched as substrings against plugin names. Plugins
-that match are excluded from the usage verdict. Use it for colorschemes and
-other plugins whose value is not expressed as calls.
+that match are excluded from the usage verdict, in `:Tally` and in `:TallyKeys`
+alike. Use it for colorschemes, and for plugins whose mappings say nothing about
+whether you use them — a UI library whose popups bind `<C-f>` while they are open
+otherwise dominates the keymap report.
 
 Two switches turn keymap measurement off, and they are not the same switch:
 
@@ -137,11 +150,13 @@ A plugin that finished loading before `tally.setup()` installed the
 declaration is the only route to correct attribution for the rest of the
 session.
 
-Global mappings that predate the hook, including Neovim's own defaults, are
-wrapped in a single sweep during `setup()` — measured at 389 mappings in
-2.14-2.80 ms, so the sweep runs synchronously. The sweep is skipped when
-`hook_keymap_set` is `false`. Buffer-local mappings are not part of that
-sweep; see Limitations.
+Global mappings that predate the hook are wrapped in a single sweep during
+`setup()` — measured at 389 mappings in 2.14-2.80 ms, so the sweep runs
+synchronously. Mappings whose callback comes from Neovim's own runtime are
+skipped by that sweep: `grn`, `[q` and the rest of `_defaults.lua` are not
+yours to prune, and listing them buries the mappings that are. The sweep is
+skipped entirely when `hook_keymap_set` is `false`. Buffer-local mappings are
+not part of it; see Limitations.
 
 ## What gets recorded
 
@@ -153,20 +168,27 @@ Records are appended as JSONL, one line per plugin per flush, holding the delta
 since the last flush. Concurrent Neovim instances can append to the same file
 safely.
 
+A load is recorded once per session, however many times `User LazyLoad` fires
+for that plugin — `:Lazy reload` would otherwise push a plugin's load count past
+the session count that is supposed to be its denominator.
+
 ## Limitations
 
 - Repeating with `.` is not counted. It does not go through the mapping.
 - A right-hand side that is a string *and* marked `expr` is left alone. That
-  string is an expression to evaluate, not a key sequence. Such a mapping
-  still shows up in `:TallyKeys` under 未使用 見直し候補, because tally can
-  see that it exists but can never see it pressed.
+  string is an expression to evaluate, not a key sequence. tally can see that
+  such a mapping exists but can never see it pressed, so it is counted among
+  the hidden rows rather than listed as unused.
 - A `<Nop>` right-hand side is left alone and never counted.
 - A global mapping created after `setup()` outside a plugin load — through
   `nvim_set_keymap`, a `:nnoremap` in a Vimscript file sourced later, or a
   `:map` typed at runtime — is never wrapped. The `setup()` sweep has already
   run and the `User LazyLoad` diff only covers mappings a lazy-loading plugin
-  registers. Such a mapping appears in `:TallyKeys` under 未使用 見直し候補
-  with owner `-`, indistinguishable from a mapping you genuinely never press.
+  registers. tally cannot name an owner for it, so it is counted in the hidden
+  tally of the `:TallyKeys` header instead of being listed as unused.
+- A mapping Neovim ships with a string right-hand side rather than a Lua
+  callback (`&`, for one) cannot be told apart from one you wrote, so it is
+  still swept and may surface as unused under `$user`.
 - Buffer-local mappings are counted only when set with `vim.keymap.set` after
   the hook is installed. The startup sweep covers global mappings that
   predate the hook, but not buffer-local ones, so a pre-existing buffer-local

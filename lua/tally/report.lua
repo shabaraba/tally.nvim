@@ -1,11 +1,14 @@
 local attrib = require("tally.attrib")
 local config = require("tally.config")
+local lhs_mod = require("tally.lhs")
 local store = require("tally.store")
+local view = require("tally.view")
 
 local M = {}
 
 local SESSION_KEY = "$session"
 local LOW_RATIO = 0.1
+local GROUPS = { "unloaded", "low", "high", "passive" }
 
 function M.aggregate(records)
   local agg = { sessions = 0, plugins = {} }
@@ -19,8 +22,10 @@ function M.aggregate(records)
         agg.plugins[rec.p] = p
       end
       p.sessions = p.sessions + (rec.load or 0)
+      -- 記録された表記のゆれはここで畳む。以降の key の空間は正規形だけになる
       for name, n in pairs(rec.key or {}) do
-        p.key[name] = (p.key[name] or 0) + n
+        local key = lhs_mod.canonical(name)
+        p.key[key] = (p.key[key] or 0) + n
         p.key_total = p.key_total + n
       end
       for name, n in pairs(rec.cmd or {}) do
@@ -37,8 +42,12 @@ function M.aggregate(records)
 end
 
 function M.classify(agg, roster)
-  local groups = { unloaded = {}, low = {}, high = {}, passive = {} }
+  local groups = {}
+  for _, name in ipairs(GROUPS) do
+    groups[name] = {}
+  end
   local threshold = math.max(1, math.floor(agg.sessions * LOW_RATIO))
+  groups.threshold = threshold
 
   for _, name in ipairs(roster) do
     -- 計測対象外のプラグインを「削除候補」として出さない
@@ -63,8 +72,8 @@ function M.classify(agg, roster)
     end
   end
 
-  for _, list in pairs(groups) do
-    table.sort(list, function(a, b)
+  for _, name in ipairs(GROUPS) do
+    table.sort(groups[name], function(a, b)
       if a.sessions ~= b.sessions then
         return a.sessions < b.sessions
       end
@@ -78,25 +87,22 @@ local function fmt_date(t)
   return t and os.date("%Y-%m-%d", t) or "-"
 end
 
+local function format_row(r)
+  return ("  %-30s %5d sess  key %-6d cmd %-6d last %s"):format(
+    r.name,
+    r.sessions,
+    r.key_total,
+    r.cmd_total,
+    fmt_date(r.last)
+  )
+end
+
 local function append_group(lines, title, rows, note)
-  if #rows == 0 then
-    return
-  end
-  lines[#lines + 1] = ""
-  lines[#lines + 1] = "■ " .. title .. (note and ("  " .. note) or "")
-  for _, r in ipairs(rows) do
-    lines[#lines + 1] = ("  %-30s %5d sess  key %-6d cmd %-6d last %s"):format(
-      r.name,
-      r.sessions,
-      r.key_total,
-      r.cmd_total,
-      fmt_date(r.last)
-    )
-  end
+  view.append(lines, title, rows, note, format_row)
 end
 
 function M.render(agg, groups)
-  local lines = { ("tally   %d sessions"):format(agg.sessions) }
+  local lines = { view.head("tally", agg.sessions, groups.threshold, "sess") }
   append_group(lines, "未ロード", groups.unloaded, "削除候補")
   append_group(lines, "低頻度", groups.low)
   append_group(lines, "常用", groups.high)
@@ -116,15 +122,7 @@ function M.show()
   end
 
   local agg = M.aggregate(store.read_all(config.options.store_dir))
-  local lines = M.render(agg, M.classify(agg, roster))
-
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modifiable = false
-  vim.bo[buf].filetype = "tally"
-  vim.bo[buf].bufhidden = "wipe"
-  vim.cmd.tabnew()
-  vim.api.nvim_win_set_buf(0, buf)
+  view.open(M.render(agg, M.classify(agg, roster)))
 end
 
 return M
